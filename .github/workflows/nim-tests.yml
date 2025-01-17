@@ -1,0 +1,41 @@
+name: Nim Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        nim-version: ['2.0.x', '2.2.x']  # Test against multiple Nim versions
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Nim environment
+      uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: ${{ matrix.nim-version }}
+        
+    - name: Install dependencies
+      run: |
+        nimble install -y
+        nimble refresh
+        
+    - name: Run tests
+      run: |
+        nimble test -y
+        
+    - name: Build project
+      run: |
+        nimble build -y
+        
+    - name: Cache nimble packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.nimble
+        key: ${{ runner.os }}-nimble-v1

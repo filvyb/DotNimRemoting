@@ -1,5 +1,6 @@
 import faststreams/[inputs, outputs]
 import strutils
+import unicode
 
 type
   Char* = string
@@ -53,6 +54,12 @@ proc readChar*(inp: InputStream): Char =
   result = newString(len)
   if not inp.readInto(result.toOpenArrayByte(0, len-1)):
     raise newException(IOError, "Failed to read UTF-8 sequence")
+
+  if validateUtf8(result) != -1:
+    raise newException(IOError, "Invalid UTF-8 sequence")
+
+  if result.runeLen != 1:
+    raise newException(IOError, "Must be exactly one Unicode character")
 
 proc readDouble*(inp: InputStream): Double =
   ## Reads 64-bit double
@@ -171,7 +178,7 @@ proc writeChar*(outp: OutputStream, c: Char) =
   ## Writes UTF-8 encoded character
   if c.len == 0:
     raise newException(ValueError, "Empty char")
-  if c.len != 1:
+  if c.runeLen != 1:
     raise newException(ValueError, "Must be exactly one Unicode character")
   outp.write(c.toOpenArrayByte(0, c.len-1))
 
