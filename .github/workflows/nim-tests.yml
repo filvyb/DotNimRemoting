@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        nim-version: ['2.0.x', '2.2.x']  # Test against multiple Nim versions
+        nim-version: ['2.0.14', '2.2.0']  # Test against multiple Nim versions
 
     steps:
     - uses: actions/checkout@v3
