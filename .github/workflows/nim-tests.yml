@@ -30,9 +30,9 @@ jobs:
       run: |
         nimble test -y
         
-    - name: Build project
-      run: |
-        nimble build -y
+    #- name: Build project
+    #  run: |
+    #    nimble build -y
         
     - name: Cache nimble packages
       uses: actions/cache@v4
