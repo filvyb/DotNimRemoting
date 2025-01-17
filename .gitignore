@@ -3,3 +3,4 @@ nimblecache/
 htmldocs/
 nimble.develop
 nimble.paths
+util.sh
