@@ -1,6 +1,6 @@
 import faststreams/[inputs, outputs]
-import types
-import enums
+import ../types
+import ../enums
 
 type
   ClassInfo* = object

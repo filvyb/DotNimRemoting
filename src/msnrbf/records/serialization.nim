@@ -1,0 +1,98 @@
+import faststreams/[inputs, outputs]
+import ../enums
+import ../types
+#import class
+
+type
+  SerializationHeaderRecord* = object
+    ## Section 2.6.1 SerializationHeaderRecord
+    ## Must be the first record in a binary serialization
+    recordType*: RecordType   # Must be rtSerializedStreamHeader
+    rootId*: int32           # Root object ID
+    headerId*: int32         # Header array ID 
+    majorVersion*: int32     # Major version, must be 1
+    minorVersion*: int32     # Minor version, must be 0
+
+  BinaryLibrary* = object
+    ## Section 2.6.2 BinaryLibrary 
+    ## Associates a library name with an ID for referencing
+    recordType*: RecordType      # Must be rtBinaryLibrary
+    libraryId*: int32           # Unique positive ID
+    libraryName*: LengthPrefixedString # Name of library
+
+  MessageEnd* = object
+    ## Section 2.6.3 MessageEnd
+    ## Marks the end of serialization stream
+    recordType*: RecordType      # Must be rtMessageEnd
+
+# Reading procedures
+proc readSerializationHeader*(inp: InputStream): SerializationHeaderRecord =
+  ## Reads SerializationHeaderRecord from stream
+  result.recordType = readRecord(inp)
+  if result.recordType != rtSerializedStreamHeader:
+    raise newException(IOError, "Invalid serialization header record type")
+    
+  if not inp.readable(16): # Need 16 bytes for 4 int32s
+    raise newException(IOError, "Incomplete serialization header")
+    
+  # Read 4 int32 fields
+  var bytes: array[4, byte]
+  
+  discard inp.readInto(bytes)
+  result.rootId = cast[int32](bytes)
+  
+  discard inp.readInto(bytes) 
+  result.headerId = cast[int32](bytes)
+  
+  discard inp.readInto(bytes)
+  result.majorVersion = cast[int32](bytes)
+  
+  discard inp.readInto(bytes)
+  result.minorVersion = cast[int32](bytes)
+  
+  # Validate version numbers
+  if result.majorVersion != 1 or result.minorVersion != 0:
+    raise newException(IOError, "Unsupported serialization format version")
+
+proc readBinaryLibrary*(inp: InputStream): BinaryLibrary =
+  ## Reads BinaryLibrary record from stream
+  result.recordType = readRecord(inp)
+  if result.recordType != rtBinaryLibrary:
+    raise newException(IOError, "Invalid binary library record type")
+    
+  if not inp.readable(4): # Need 4 bytes for libraryId
+    raise newException(IOError, "Missing library ID")
+    
+  var bytes: array[4, byte]
+  discard inp.readInto(bytes)
+  result.libraryId = cast[int32](bytes)
+  
+  if result.libraryId <= 0:
+    raise newException(IOError, "Library ID must be positive")
+    
+  result.libraryName = readLengthPrefixedString(inp)
+
+proc readMessageEnd*(inp: InputStream): MessageEnd =
+  ## Reads MessageEnd record from stream
+  result.recordType = readRecord(inp)
+  if result.recordType != rtMessageEnd:
+    raise newException(IOError, "Invalid message end record type")
+
+# Writing procedures 
+proc writeSerializationHeader*(outp: OutputStream, hdr: SerializationHeaderRecord) =
+  ## Writes SerializationHeaderRecord to stream
+  writeRecord(outp, hdr.recordType)
+  outp.write(cast[array[4, byte]](hdr.rootId))
+  outp.write(cast[array[4, byte]](hdr.headerId))
+  outp.write(cast[array[4, byte]](hdr.majorVersion))
+  outp.write(cast[array[4, byte]](hdr.minorVersion))
+
+proc writeBinaryLibrary*(outp: OutputStream, lib: BinaryLibrary) =
+  ## Writes BinaryLibrary record to stream
+  writeRecord(outp, lib.recordType)
+  outp.write(cast[array[4, byte]](lib.libraryId))
+  writeLengthPrefixedString(outp, lib.libraryName.value)
+
+proc writeMessageEnd*(outp: OutputStream, msgEnd: MessageEnd) =
+  ## Writes MessageEnd record to stream
+  writeRecord(outp, msgEnd.recordType)
