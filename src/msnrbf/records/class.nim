@@ -56,11 +56,11 @@ proc readClassInfo*(inp: InputStream): ClassInfo =
   if not inp.readable(8): # Need at least 8 bytes for objectId and memberCount
     raise newException(IOError, "Incomplete ClassInfo data")
   
-  result.objectId = cast[int32](inp.read(4))
+  result.objectId = cast[ptr int32](inp.read(4)[0].addr)[]
   let nameStr = readLengthPrefixedString(inp)
   result.name = nameStr
   
-  result.memberCount = cast[int32](inp.read(4))
+  result.memberCount = cast[ptr int32](inp.read(4)[0].addr)[]
   
   # Read member names
   for i in 0..<result.memberCount:
@@ -119,7 +119,7 @@ proc readClassWithMembersAndTypes*(inp: InputStream): ClassWithMembersAndTypes =
   
   if not inp.readable(4):
     raise newException(IOError, "Missing library ID")
-  result.libraryId = cast[int32](inp.read(4))
+  result.libraryId = cast[ptr int32](inp.read(4)[0].addr)[]
 
 proc writeClassWithMembersAndTypes*(outp: OutputStream, obj: ClassWithMembersAndTypes) =
   ## Writes ClassWithMembersAndTypes record to stream 
@@ -138,7 +138,7 @@ proc readClassWithMembers*(inp: InputStream): ClassWithMembers =
   
   if not inp.readable(4):
     raise newException(IOError, "Missing library ID")
-  result.libraryId = cast[int32](inp.read(4))
+  result.libraryId = cast[ptr int32](inp.read(4)[0].addr)[]
 
 proc writeClassWithMembers*(outp: OutputStream, obj: ClassWithMembers) =
   ## Writes ClassWithMembers record to stream
@@ -183,8 +183,8 @@ proc readClassWithId*(inp: InputStream): ClassWithId =
   if not inp.readable(8): # Need 8 bytes for IDs
     raise newException(IOError, "Missing IDs")
     
-  result.objectId = cast[int32](inp.read(4))
-  result.metadataId = cast[int32](inp.read(4))
+  result.objectId = cast[ptr int32](inp.read(4)[0].addr)[]
+  result.metadataId = cast[ptr int32](inp.read(4)[0].addr)[]
 
 proc writeClassWithId*(outp: OutputStream, obj: ClassWithId) =
   ## Writes ClassWithId record to stream
