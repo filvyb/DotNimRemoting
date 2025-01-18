@@ -56,11 +56,141 @@ type
     ptNull = 17 # null object
     ptString = 18 # LengthPrefixedString
 
+  BinaryArrayType* = enum
+    ## Section 2.4.1.1 BinaryArrayTypeEnumeration
+    ## Denotes type of array
+    batSingle = 0            # Single-dimensional Array
+    batJagged = 1           # Array whose elements are Arrays (can be different dimensions/sizes)
+    batRectangular = 2      # Multi-dimensional rectangular Array
+    batSingleOffset = 3     # Single-dimensional offset
+    batJaggedOffset = 4     # Jagged Array with lower bound index > 0
+    batRectangularOffset = 5 # Multi-dimensional Arrays with lower bound index > 0 for at least one dimension
+
+  MessageFlag* {.pure.} = enum
+    ## Section 2.2.1.1 MessageFlags individual bits
+    NoArgs                  # No arguments 
+    ArgsInline             # Arguments Array in Args field of Method record
+    ArgsIsArray            # Each argument is item in separate Call Array record
+    ArgsInArray            # Arguments Array is item in separate Call Array record
+    NoContext              # No Call Context value
+    ContextInline          # Call Context contains only Logical Call ID in CallContext field
+    ContextInArray         # CallContext values in array in Call Array record
+    MethodSignatureInArray # Method Signature in Call Array record
+    PropertyInArray        # Message Properties in Call Array record
+    NoReturnValue          # Return Value is Null object
+    ReturnValueVoid        # Method has no Return Value
+    ReturnValueInline      # Return Value in ReturnValue field
+    ReturnValueInArray     # Return Value in Call Array record 
+    ExceptionInArray       # Exception in Call Array record
+    GenericMethod          # Remote Method is generic, actual types in Call Array
+    Reserved15            # Reserved
+    Reserved16            # Reserved 
+    Reserved17            # Reserved
+    Reserved18            # Reserved
+    Reserved19            # Reserved
+    Reserved20            # Reserved
+    Reserved21            # Reserved
+    Reserved22            # Reserved  
+    Reserved23            # Reserved
+    Reserved24            # Reserved
+    Reserved25            # Reserved
+    Reserved26            # Reserved
+    Reserved27            # Reserved
+    Reserved28            # Reserved
+    Reserved29            # Reserved
+    Reserved30            # Reserved
+    Reserved31            # Reserved
+
+  MessageFlags* = set[MessageFlag]
+    ## Combination of MessageFlag bits
+
+# Message flag validation
+proc validateMessageFlags*(flags: MessageFlags) =
+  ## Validates message flag combinations according to spec rules
+  ## Raises ValueError for invalid combinations
+  
+  # Check mutually exclusive categories
+  template checkMutuallyExclusive(categoryA, categoryB: set[MessageFlag]) =
+    if len(flags * categoryA) > 0 and len(flags * categoryB) > 0:
+      raise newException(ValueError, "Invalid flag combination")
+
+  let
+    argsFlags = {NoArgs, ArgsInline, ArgsIsArray, ArgsInArray}
+    contextFlags = {NoContext, ContextInline, ContextInArray}
+    signatureFlags = {MethodSignatureInArray}
+    returnFlags = {NoReturnValue, ReturnValueVoid, ReturnValueInline, ReturnValueInArray}
+    exceptionFlags = {ExceptionInArray}
+    propertyFlags = {PropertyInArray}
+    genericFlags = {GenericMethod}
+
+  # Category exclusivity rules from spec
+  checkMutuallyExclusive(argsFlags, exceptionFlags)
+  checkMutuallyExclusive(returnFlags, exceptionFlags)
+  checkMutuallyExclusive(returnFlags, signatureFlags)
+  checkMutuallyExclusive(signatureFlags, exceptionFlags)
+  
+  # Check one flag per category at most
+  for category in [argsFlags, contextFlags, signatureFlags, 
+                  returnFlags, exceptionFlags, propertyFlags, genericFlags]:
+    if len(flags * category) > 1:
+      raise newException(ValueError, "Multiple flags from same category")
+
+# Reading procedures
 proc readRecord*(inp: InputStream): RecordType =
   ## Reads record type from stream
   if inp.readable:
     result = RecordType(inp.read())
 
+proc readBinaryArrayType*(inp: InputStream): BinaryArrayType =
+  ## Reads binary array type from stream
+  if inp.readable:
+    result = BinaryArrayType(inp.read())
+
+proc readMessageFlags*(inp: InputStream): MessageFlags =
+  ## Reads message flags from stream (as 32-bit value)
+  ## Validates flag combinations according to spec rules
+  ## Raises IOError for read failures or invalid flag combinations
+  if not inp.readable(4):
+    raise newException(IOError, "Not enough bytes for message flags")
+    
+  var bytes: array[4, byte]
+  if not inp.readInto(bytes):
+    raise newException(IOError, "Failed to read message flags")
+    
+  let value = cast[uint32](bytes)
+  
+  # Convert bits to set
+  for flag in MessageFlag:
+    if (value and (1'u32 shl ord(flag))) != 0:
+      result.incl(flag)
+
+  # Validate the resulting flag combination
+  try:
+    validateMessageFlags(result)
+  except ValueError as e:
+    raise newException(IOError, "Invalid message flags: " & e.msg)
+
+# Writing procedures
 proc writeRecord*(outp: OutputStream, rt: RecordType) =
   ## Writes record type to stream
   outp.write(byte(rt))
+
+proc writeBinaryArrayType*(outp: OutputStream, bat: BinaryArrayType) =
+  ## Writes binary array type to stream
+  outp.write(byte(bat))
+
+proc writeMessageFlags*(outp: OutputStream, flags: MessageFlags) = 
+  ## Writes message flags to stream (as 32-bit value)
+  ## Validates flag combinations before writing
+  ## Raises ValueError for invalid flag combinations
+  
+  # Validate before writing
+  validateMessageFlags(flags)
+  
+  var value: uint32
+  # Convert set to bits
+  for flag in flags:
+    value = value or (1'u32 shl ord(flag))
+    
+  let bytes = cast[array[4, byte]](value)
+  outp.write(bytes)

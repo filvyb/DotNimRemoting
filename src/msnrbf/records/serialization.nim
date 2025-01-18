@@ -33,22 +33,17 @@ proc readSerializationHeader*(inp: InputStream): SerializationHeaderRecord =
     raise newException(IOError, "Invalid serialization header record type")
     
   if not inp.readable(16): # Need 16 bytes for 4 int32s
-    raise newException(IOError, "Incomplete serialization header")
+    raise newException(IOError, "Incomplete serialization header - expected 16 bytes")
     
   # Read 4 int32 fields
-  var bytes: array[4, byte]
-  
-  discard inp.readInto(bytes)
-  result.rootId = cast[int32](bytes)
-  
-  discard inp.readInto(bytes) 
-  result.headerId = cast[int32](bytes)
-  
-  discard inp.readInto(bytes)
-  result.majorVersion = cast[int32](bytes)
-  
-  discard inp.readInto(bytes)
-  result.minorVersion = cast[int32](bytes)
+  var bytes: array[16, byte] 
+  if not inp.readInto(bytes):
+    raise newException(IOError, "Failed to read header data")
+    
+  result.rootId = cast[ptr int32](bytes[0].unsafeAddr)[]
+  result.headerId = cast[ptr int32](bytes[4].unsafeAddr)[]
+  result.majorVersion = cast[ptr int32](bytes[8].unsafeAddr)[]
+  result.minorVersion = cast[ptr int32](bytes[12].unsafeAddr)[]
   
   # Validate version numbers
   if result.majorVersion != 1 or result.minorVersion != 0:
@@ -89,10 +84,14 @@ proc writeSerializationHeader*(outp: OutputStream, hdr: SerializationHeaderRecor
 
 proc writeBinaryLibrary*(outp: OutputStream, lib: BinaryLibrary) =
   ## Writes BinaryLibrary record to stream
+  if lib.recordType != rtBinaryLibrary:
+    raise newException(ValueError, "Invalid binary library record type")
   writeRecord(outp, lib.recordType)
   outp.write(cast[array[4, byte]](lib.libraryId))
   writeLengthPrefixedString(outp, lib.libraryName.value)
 
 proc writeMessageEnd*(outp: OutputStream, msgEnd: MessageEnd) =
   ## Writes MessageEnd record to stream
+  if msgEnd.recordType != rtMessageEnd:
+    raise newException(ValueError, "Invalid message end record type")
   writeRecord(outp, msgEnd.recordType)
