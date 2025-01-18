@@ -1,4 +1,4 @@
-name: Nim Tests
+name: Unit tests
 
 on:
   push:
@@ -12,28 +12,74 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         nim-version: ['2.0.14', '2.2.0']
-      fail-fast: false  # Continue with other OS/version combinations even if one fails
+        arch: [x64, arm64]
+      fail-fast: false
     
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.arch == 'arm64' && matrix.os == 'macos-latest' && 'macos-14' || 
+                 matrix.arch == 'arm64' && matrix.os == 'windows-latest' && 'windows-latest-arm64' ||
+                 matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Nim environment
+    # Install Nim on ARM platforms that need manual installation
+    - name: Install Nim (Ubuntu ARM64)
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc git
+        git clone https://github.com/nim-lang/nim.git
+        cd nim
+        git checkout v${{ matrix.nim-version }}
+        sh build_all.sh
+        bin/nim c koch
+        ./koch boot -d:release
+        ./koch tools
+        echo "$PWD/bin" >> $GITHUB_PATH
+
+    - name: Install Nim (Windows ARM64)
+      if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+      shell: pwsh
+      run: |
+        # Download mingw-w64 for ARM64
+        $MINGW_VERSION = "20250114"
+        Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/$MINGW_VERSION/llvm-mingw-$MINGW_VERSION-ucrt-aarch64.zip" -OutFile "mingw.zip"
+        Expand-Archive mingw.zip -DestinationPath C:\mingw
+        $env:PATH = "C:\mingw\bin;" + $env:PATH
+        
+        # Clone and build Nim
+        git clone https://github.com/nim-lang/nim.git
+        cd nim
+        git checkout v${{ matrix.nim-version }}
+        ./build_all.bat
+        bin/nim c koch
+        ./koch boot -d:release
+        ./koch tools
+        
+        # Add Nim to PATH
+        echo "$pwd\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Install Nim (macOS ARM64)
+      if: matrix.os == 'macos-latest' && matrix.arch == 'arm64'
+      uses: jiro4989/setup-nim-action@v2.2.2
+      with:
+        nim-version: ${{ matrix.nim-version }}
+
+    # Default x64 installation
+    - name: Install Nim (x64)
+      if: matrix.arch == 'x64'
       uses: jiro4989/setup-nim-action@v2.2.2
       with:
         nim-version: ${{ matrix.nim-version }}
         
     - name: Install dependencies
       run: |
-        nimble refresh
         nimble install -y
         nimble refresh
         
     - name: Run tests
-      run: nimble test
+      run: nimble test -y
         
-    # Caching strategy adapted for each OS
     - name: Cache nimble packages
       uses: actions/cache@v4
       with:
@@ -42,7 +88,7 @@ jobs:
           ${{ github.workspace }}/nimcache
           ${{ env.APPDATA }}/nimble  # Windows-specific
           ~/Library/Nimble           # macOS-specific
-        key: ${{ runner.os }}-nim-${{ matrix.nim-version }}-v1
+        key: ${{ runner.os }}-${{ matrix.arch }}-nim-${{ matrix.nim-version }}-v1
         restore-keys: |
-          ${{ runner.os }}-nim-${{ matrix.nim-version }}-
-          ${{ runner.os }}-nim-
+          ${{ runner.os }}-${{ matrix.arch }}-nim-${{ matrix.nim-version }}-
+          ${{ runner.os }}-${{ matrix.arch }}-nim-
