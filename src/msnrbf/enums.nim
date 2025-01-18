@@ -1,4 +1,5 @@
 import faststreams/[inputs, outputs]
+import types
 
 type
   RecordType* = enum
@@ -150,14 +151,8 @@ proc readMessageFlags*(inp: InputStream): MessageFlags =
   ## Reads message flags from stream (as 32-bit value)
   ## Validates flag combinations according to spec rules
   ## Raises IOError for read failures or invalid flag combinations
-  if not inp.readable(4):
-    raise newException(IOError, "Not enough bytes for message flags")
-    
-  var bytes: array[4, byte]
-  if not inp.readInto(bytes):
-    raise newException(IOError, "Failed to read message flags")
-    
-  let value = cast[uint32](bytes)
+
+  let value = readValueWithContext[uint32](inp, "reading message flags")
   
   # Convert bits to set
   for flag in MessageFlag:

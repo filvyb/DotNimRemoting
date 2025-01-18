@@ -55,12 +55,7 @@ proc readBinaryLibrary*(inp: InputStream): BinaryLibrary =
   if result.recordType != rtBinaryLibrary:
     raise newException(IOError, "Invalid binary library record type")
     
-  if not inp.readable(4): # Need 4 bytes for libraryId
-    raise newException(IOError, "Missing library ID")
-    
-  var bytes: array[4, byte]
-  discard inp.readInto(bytes)
-  result.libraryId = cast[int32](bytes)
+  result.libraryId = readValueWithContext[int32](inp, "reading library ID for BinaryLibrary")
   
   if result.libraryId <= 0:
     raise newException(IOError, "Library ID must be positive")

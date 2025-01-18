@@ -65,15 +65,12 @@ type
     metadataId*: int32        # Reference to existing class metadata
 
 proc readClassInfo*(inp: InputStream): ClassInfo =
-  ## Reads ClassInfo structure from stream
-  if not inp.readable(8): # Need at least 8 bytes for objectId and memberCount
-    raise newException(IOError, "Incomplete ClassInfo data")
-  
-  result.objectId = cast[ptr int32](inp.read(4)[0].addr)[]
+  ## Reads ClassInfo structure from stream  
+  result.objectId = readValueWithContext[int32](inp, "reading object ID for ClassInfo")
   let nameStr = readLengthPrefixedString(inp)
   result.name = nameStr
   
-  result.memberCount = cast[ptr int32](inp.read(4)[0].addr)[]
+  result.memberCount = readValueWithContext[int32](inp, "reading member count for ClassInfo")
   
   # Read member names
   for i in 0..<result.memberCount:
@@ -151,9 +148,7 @@ proc readClassWithMembersAndTypes*(inp: InputStream): ClassWithMembersAndTypes =
   result.classInfo = readClassInfo(inp)
   result.memberTypeInfo = readMemberTypeInfo(inp, result.classInfo.memberCount)
   
-  if not inp.readable(4):
-    raise newException(IOError, "Missing library ID")
-  result.libraryId = cast[ptr int32](inp.read(4)[0].addr)[]
+  result.libraryId = readValueWithContext[int32](inp, "reading library ID for ClassWithMembersAndTypes")
 
 proc writeClassWithMembersAndTypes*(outp: OutputStream, obj: ClassWithMembersAndTypes) =
   ## Writes ClassWithMembersAndTypes record to stream 
@@ -170,9 +165,7 @@ proc readClassWithMembers*(inp: InputStream): ClassWithMembers =
     
   result.classInfo = readClassInfo(inp)
   
-  if not inp.readable(4):
-    raise newException(IOError, "Missing library ID")
-  result.libraryId = cast[ptr int32](inp.read(4)[0].addr)[]
+  result.libraryId = readValueWithContext[int32](inp, "reading library ID for ClassWithMembers")
 
 proc writeClassWithMembers*(outp: OutputStream, obj: ClassWithMembers) =
   ## Writes ClassWithMembers record to stream
@@ -214,11 +207,11 @@ proc readClassWithId*(inp: InputStream): ClassWithId =
   if result.recordType != rtClassWithId:
     raise newException(IOError, "Invalid record type")
     
-  if not inp.readable(8): # Need 8 bytes for IDs
-    raise newException(IOError, "Missing IDs")
+  #if not inp.readable(8): # Need 8 bytes for IDs
+  #  raise newException(IOError, "Missing IDs")
     
-  result.objectId = cast[ptr int32](inp.read(4)[0].addr)[]
-  result.metadataId = cast[ptr int32](inp.read(4)[0].addr)[]
+  result.objectId = readValueWithContext[int32](inp, "reading object ID for ClassWithId")
+  result.metadataId = readValueWithContext[int32](inp, "reading metadata ID for ClassWithId")
 
 proc writeClassWithId*(outp: OutputStream, obj: ClassWithId) =
   ## Writes ClassWithId record to stream

@@ -1,6 +1,7 @@
 import faststreams/[inputs, outputs]
 import strutils
 import unicode
+import macros
 
 type
   Char* = string
@@ -35,6 +36,27 @@ type
     libraryId*: int32               # ID that references BinaryLibrary record
 
 # Reading procedures
+template readValueImpl[T](context: string, inp: InputStream): T =
+  ## Implementation template that includes error context
+  when sizeof(T) > 0:
+    if not inp.readable(sizeof(T)):
+      # Include type, size and context in error
+      raise newException(IOError, "Not enough bytes to read " & $T & " (need " & $sizeof(T) & " bytes) at " & context)
+    var bytes: array[sizeof(T), byte]
+    if not inp.readInto(bytes):
+      raise newException(IOError, "Failed to read " & $T & " at " & context)
+    cast[T](bytes)
+  else:
+    default(T)
+
+template readValue*[T](inp: InputStream): T =
+  ## Wrapper that adds line information to context
+  readValueImpl[T]("line " & $lineInfoObj().line, inp)
+
+template readValueWithContext*[T](inp: InputStream, context: string): T =
+  ## Allows adding custom context to error message
+  readValueImpl[T](context, inp)
+
 proc readChar*(inp: InputStream): Char =
   ## Reads UTF-8 encoded character
   # First need to peek at the first byte to determine length
@@ -174,6 +196,16 @@ proc readClassTypeInfo*(inp: InputStream): ClassTypeInfo =
 
 
 # Writing procedures
+template writeValue*[T](outp: OutputStream, val: T) =
+  ## Generic template for writing a fixed-size value to stream
+  when sizeof(T) > 0:
+    outp.write(cast[array[sizeof(T), byte]](val))
+
+template writeValues*[T](outp: OutputStream, vals: varargs[T]) =
+  ## Write multiple values of same type
+  for val in vals:
+    writeValue[T](outp, val)
+
 proc writeChar*(outp: OutputStream, c: Char) =
   ## Writes UTF-8 encoded character
   if c.len == 0:
