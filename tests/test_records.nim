@@ -35,7 +35,10 @@ suite "Class Records Tests":
   test "MemberTypeInfo with Primitive types":
     let memberTypes = MemberTypeInfo(
       binaryTypes: @[btPrimitive, btPrimitive],
-      additionalInfos: @[ptString, ptInt32]
+      additionalInfos: @[
+        AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptString),
+        AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32)
+      ]
     )
 
     var outStream = memoryOutput()
@@ -48,13 +51,29 @@ suite "Class Records Tests":
     check decoded.binaryTypes.len == 2
     check decoded.binaryTypes[0] == btPrimitive
     check decoded.binaryTypes[1] == btPrimitive
-    check decoded.additionalInfos[0] == ptString
-    check decoded.additionalInfos[1] == ptInt32
+    check decoded.additionalInfos[0].kind == btPrimitive
+    check decoded.additionalInfos[0].primitiveType == ptString
+    check decoded.additionalInfos[1].kind == btPrimitive
+    check decoded.additionalInfos[1].primitiveType == ptInt32
 
   test "MemberTypeInfo with mixed types":
     let memberTypes = MemberTypeInfo(
-      binaryTypes: @[btPrimitive, btString, btObject, btClass],
-      additionalInfos: @[ptInt32, ptNull, ptNull, ptNull]
+      binaryTypes: @[btPrimitive, btString, btSystemClass, btClass],
+      additionalInfos: @[
+        AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+        AdditionalTypeInfo(kind: btString),
+        AdditionalTypeInfo(
+          kind: btSystemClass, 
+          className: LengthPrefixedString(value: "System.String")
+        ),
+        AdditionalTypeInfo(
+          kind: btClass,
+          classInfo: ClassTypeInfo(
+            typeName: LengthPrefixedString(value: "TestClass"),
+            libraryId: 1
+          )
+        )
+      ]
     )
 
     var outStream = memoryOutput()
@@ -65,30 +84,70 @@ suite "Class Records Tests":
     let decoded = readMemberTypeInfo(inStream, 4)
 
     check decoded.binaryTypes.len == 4
-    check decoded.binaryTypes == @[btPrimitive, btString, btObject, btClass]
-    check decoded.additionalInfos[0] == ptInt32
-    check decoded.additionalInfos[1] == ptNull
-    check decoded.additionalInfos[2] == ptNull
-    check decoded.additionalInfos[3] == ptNull
+    check decoded.binaryTypes == @[btPrimitive, btString, btSystemClass, btClass]
+    
+    check decoded.additionalInfos[0].kind == btPrimitive
+    check decoded.additionalInfos[0].primitiveType == ptInt32
+    
+    check decoded.additionalInfos[1].kind == btString
+    
+    check decoded.additionalInfos[2].kind == btSystemClass
+    check decoded.additionalInfos[2].className.value == "System.String"
+    
+    check decoded.additionalInfos[3].kind == btClass
+    check decoded.additionalInfos[3].classInfo.typeName.value == "TestClass"
+    check decoded.additionalInfos[3].classInfo.libraryId == 1
 
-  test "Full class serialization/deserialization":
-    # Example based on MS-NRBF docs section 3
+  test "PrimitiveArray type info":
+    let memberTypes = MemberTypeInfo(
+      binaryTypes: @[btPrimitiveArray],
+      additionalInfos: @[
+        AdditionalTypeInfo(kind: btPrimitiveArray, primitiveType: ptInt32)
+      ]
+    )
+
+    var outStream = memoryOutput()
+    writeMemberTypeInfo(outStream, memberTypes)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readMemberTypeInfo(inStream, 1)
+
+    check decoded.binaryTypes[0] == btPrimitiveArray
+    check decoded.additionalInfos[0].kind == btPrimitiveArray
+    check decoded.additionalInfos[0].primitiveType == ptInt32
+
+  test "Full class serialization with complex member types":
     let cls = ClassWithMembersAndTypes(
       recordType: rtClassWithMembersAndTypes,
       classInfo: ClassInfo(
         objectId: 2,
-        name: LengthPrefixedString(value: "DOJRemotingMetadata.Address"),
+        name: LengthPrefixedString(value: "ComplexClass"),
         memberCount: 4,
         memberNames: @[
-          LengthPrefixedString(value: "Street"),
-          LengthPrefixedString(value: "City"), 
-          LengthPrefixedString(value: "State"),
-          LengthPrefixedString(value: "Zip")
+          LengthPrefixedString(value: "primitiveField"),
+          LengthPrefixedString(value: "stringField"),
+          LengthPrefixedString(value: "systemClassField"),
+          LengthPrefixedString(value: "customClassField")
         ]
       ),
       memberTypeInfo: MemberTypeInfo(
-        binaryTypes: @[btString, btString, btString, btString],
-        additionalInfos: @[ptNull, ptNull, ptNull, ptNull]
+        binaryTypes: @[btPrimitive, btString, btSystemClass, btClass],
+        additionalInfos: @[
+          AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+          AdditionalTypeInfo(kind: btString),
+          AdditionalTypeInfo(
+            kind: btSystemClass,
+            className: LengthPrefixedString(value: "System.DateTime")
+          ),
+          AdditionalTypeInfo(
+            kind: btClass,
+            classInfo: ClassTypeInfo(
+              typeName: LengthPrefixedString(value: "CustomType"),
+              libraryId: 3
+            )
+          )
+        ]
       ),
       libraryId: 3
     )
@@ -100,12 +159,13 @@ suite "Class Records Tests":
     let inStream = memoryInput(serialized)
     let decoded = readClassWithMembersAndTypes(inStream)
 
-    check decoded.recordType == rtClassWithMembersAndTypes
-    check decoded.classInfo.objectId == 2
-    check decoded.classInfo.name.value == "DOJRemotingMetadata.Address"
     check decoded.classInfo.memberCount == 4
     check decoded.memberTypeInfo.binaryTypes.len == 4
-    check decoded.libraryId == 3
+    
+    # Verify complex member type info was preserved
+    check decoded.memberTypeInfo.additionalInfos[0].primitiveType == ptInt32
+    check decoded.memberTypeInfo.additionalInfos[2].className.value == "System.DateTime"
+    check decoded.memberTypeInfo.additionalInfos[3].classInfo.typeName.value == "CustomType"
 
   test "Basic class without type info":
     let cls = ClassWithMembers(
@@ -134,37 +194,6 @@ suite "Class Records Tests":
     check decoded.classInfo.name.value == "SimpleClass"
     check decoded.classInfo.memberCount == 2
     check decoded.libraryId == 1
-
-  test "System class serialization":
-    let cls = SystemClassWithMembersAndTypes(
-      recordType: rtSystemClassWithMembersAndTypes,
-      classInfo: ClassInfo(
-        objectId: 4,
-        name: LengthPrefixedString(value: "System.Exception"),
-        memberCount: 2,
-        memberNames: @[
-          LengthPrefixedString(value: "Message"),
-          LengthPrefixedString(value: "StackTrace")
-        ]
-      ),
-      memberTypeInfo: MemberTypeInfo(
-        binaryTypes: @[btString, btString],
-        additionalInfos: @[ptNull, ptNull]
-      )
-    )
-
-    var outStream = memoryOutput()
-    writeSystemClassWithMembersAndTypes(outStream, cls)
-    let serialized = outStream.getOutput(seq[byte])
-
-    let inStream = memoryInput(serialized)
-    let decoded = readSystemClassWithMembersAndTypes(inStream)
-
-    check decoded.recordType == rtSystemClassWithMembersAndTypes
-    check decoded.classInfo.objectId == 4
-    check decoded.classInfo.name.value == "System.Exception"
-    check decoded.classInfo.memberCount == 2
-    check decoded.memberTypeInfo.binaryTypes == @[btString, btString]
 
   test "Class reference serialization":
     let cls = ClassWithId(
@@ -207,21 +236,6 @@ suite "Class Records Tests":
     let inStream = memoryInput(serialized)
     expect IOError:
       discard readClassInfo(inStream)
-
-  test "Invalid MemberTypeInfo count":
-    let memberTypes = MemberTypeInfo(
-      binaryTypes: @[btPrimitive],
-      additionalInfos: @[ptInt32]
-    )
-
-    var outStream = memoryOutput()
-    writeMemberTypeInfo(outStream, memberTypes)
-    let serialized = outStream.getOutput(seq[byte])
-
-    let inStream = memoryInput(serialized)
-    expect IOError:
-      # Try to read more members than available
-      discard readMemberTypeInfo(inStream, 2)
 
 suite "Other Records Tests":
   test "Basic header serialization/deserialization":

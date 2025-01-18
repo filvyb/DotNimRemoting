@@ -10,10 +10,23 @@ type
     memberCount*: int32   # Number of members
     memberNames*: seq[LengthPrefixedString] # Names of members
 
+  AdditionalTypeInfo* = object
+    ## Helper structure for MemberTypeInfo
+    case kind*: BinaryType
+    of btPrimitive, btPrimitiveArray:
+      primitiveType*: PrimitiveType
+    of btSystemClass:
+      className*: LengthPrefixedString  
+    of btClass:
+      classInfo*: ClassTypeInfo
+    else:
+      discard
+      
   MemberTypeInfo* = object
-    ## MemberTypeInfo as specified in MS-NRBF section 2.3.1.2
-    binaryTypes*: seq[BinaryType]      # Types of members
-    additionalInfos*: seq[PrimitiveType] # Additional type info where needed
+    ## Section 2.3.1.2 MemberTypeInfo structure
+    ## Contains type information for Class Members
+    binaryTypes*: seq[BinaryType]           # Types of members
+    additionalInfos*: seq[AdditionalTypeInfo] # Additional type info where needed
 
   ClassWithMembersAndTypes* = object
     ## Section 2.3.2.1 ClassWithMembersAndTypes record
@@ -80,33 +93,54 @@ proc readMemberTypeInfo*(inp: InputStream, memberCount: int): MemberTypeInfo =
   ## Reads MemberTypeInfo structure from stream.
   ## memberCount specifies number of members to read types for.
   
-  # Read binary types first
+  # First read all binary types
   for i in 0..<memberCount:
     if not inp.readable:
       raise newException(IOError, "Incomplete MemberTypeInfo data")
     result.binaryTypes.add(BinaryType(inp.read()))
 
-  # Read additional info for types that need it
+  # Then read additional info based on binary type
   for btype in result.binaryTypes:
+    var addInfo = AdditionalTypeInfo(kind: btype)
+    
     case btype
     of btPrimitive, btPrimitiveArray:
       if not inp.readable:
         raise newException(IOError, "Missing primitive type info")
-      result.additionalInfos.add(PrimitiveType(inp.read()))
-    else:
-      # Other types don't need additional info
-      result.additionalInfos.add(ptNull)
+      addInfo.primitiveType = PrimitiveType(inp.read())
+      
+    of btSystemClass:
+      addInfo.className = readLengthPrefixedString(inp)
+      
+    of btClass:
+      addInfo.classInfo = readClassTypeInfo(inp)
+      
+    of btString, btObject, btObjectArray, btStringArray:
+      discard # No additional info needed
+      
+    result.additionalInfos.add(addInfo)
 
 proc writeMemberTypeInfo*(outp: OutputStream, mti: MemberTypeInfo) =
   ## Writes MemberTypeInfo structure to stream
-  # Write binary types
+  
+  # Write binary types first
   for btype in mti.binaryTypes:
     outp.write(byte(btype))
     
-  # Write additional type info
-  for i, addInfo in mti.additionalInfos:
-    if mti.binaryTypes[i] in {btPrimitive, btPrimitiveArray}:
-      outp.write(byte(addInfo))
+  # Write additional type info where needed
+  for addInfo in mti.additionalInfos:
+    case addInfo.kind
+    of btPrimitive, btPrimitiveArray:
+      outp.write(byte(addInfo.primitiveType))
+      
+    of btSystemClass:
+      writeLengthPrefixedString(outp, addInfo.className.value)
+      
+    of btClass:
+      writeClassTypeInfo(outp, addInfo.classInfo)
+      
+    else:
+      discard # No additional info to write
 
 proc readClassWithMembersAndTypes*(inp: InputStream): ClassWithMembersAndTypes =
   ## Reads ClassWithMembersAndTypes record from stream
