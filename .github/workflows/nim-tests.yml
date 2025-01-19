@@ -13,11 +13,13 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         nim-version: ['2.0.14', '2.2.0']
         arch: [x64, arm64]
+        exclude:
+          # GitHub doesn't provide Windows ARM runners yet
+          - os: windows-latest
+            arch: arm64
       fail-fast: false
     
-    runs-on: ${{ matrix.arch == 'arm64' && matrix.os == 'macos-latest' && 'macos-14' || 
-                 matrix.arch == 'arm64' && matrix.os == 'windows-latest' && 'windows-latest-arm64' ||
-                 matrix.os }}
+    runs-on: ${{ matrix.arch == 'arm64' && matrix.os == 'macos-latest' && 'macos-14' || matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
@@ -36,28 +38,6 @@ jobs:
         ./koch boot -d:release
         ./koch tools
         echo "$PWD/bin" >> $GITHUB_PATH
-
-    - name: Install Nim (Windows ARM64)
-      if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-      shell: pwsh
-      run: |
-        # Download mingw-w64 for ARM64
-        $MINGW_VERSION = "20250114"
-        Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/$MINGW_VERSION/llvm-mingw-$MINGW_VERSION-ucrt-aarch64.zip" -OutFile "mingw.zip"
-        Expand-Archive mingw.zip -DestinationPath C:\mingw
-        $env:PATH = "C:\mingw\bin;" + $env:PATH
-        
-        # Clone and build Nim
-        git clone https://github.com/nim-lang/nim.git
-        cd nim
-        git checkout v${{ matrix.nim-version }}
-        ./build_all.bat
-        bin/nim c koch
-        ./koch boot -d:release
-        ./koch tools
-        
-        # Add Nim to PATH
-        echo "$pwd\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
     - name: Install Nim (macOS ARM64)
       if: matrix.os == 'macos-latest' && matrix.arch == 'arm64'
