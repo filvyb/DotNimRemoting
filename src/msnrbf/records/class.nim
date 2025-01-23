@@ -86,6 +86,57 @@ proc writeClassInfo*(outp: OutputStream, ci: ClassInfo) =
   for name in ci.memberNames:
     writeLengthPrefixedString(outp, name.value)
 
+proc readAdditionalTypeInfo*(inp: InputStream, btype: BinaryType): AdditionalTypeInfo =
+  ## Reads AdditionalTypeInfo structure from stream based on BinaryType
+  ## As specified in MS-NRBF section 2.3.1.2 MemberTypeInfo
+  result = AdditionalTypeInfo(kind: btype)
+  
+  case btype
+  of btPrimitive, btPrimitiveArray:
+    # For primitive types, read the PrimitiveTypeEnum value
+    if not inp.readable:
+      raise newException(IOError, "Missing primitive type info")
+    result.primitiveType = PrimitiveType(inp.read())
+    
+    # Validate primitive type - String and Null are not valid here
+    if result.primitiveType in {ptString, ptNull}:
+      raise newException(IOError, "Invalid primitive type: " & $result.primitiveType)
+      
+  of btSystemClass:
+    # System class requires just the class name as string
+    result.className = readLengthPrefixedString(inp)
+    
+  of btClass:
+    # Regular class requires ClassTypeInfo with name and library ID
+    result.classInfo = readClassTypeInfo(inp)
+    
+  of btString, btObject, btObjectArray, btStringArray:
+    # These types don't require additional info
+    discard
+
+proc writeAdditionalTypeInfo*(outp: OutputStream, info: AdditionalTypeInfo) =
+  ## Writes AdditionalTypeInfo structure to stream
+  ## The BinaryType determines what additional data needs to be written
+  
+  case info.kind
+  of btPrimitive, btPrimitiveArray:
+    # Validate primitive type before writing
+    if info.primitiveType in {ptString, ptNull}:
+      raise newException(ValueError, "Invalid primitive type: " & $info.primitiveType)
+    outp.write(byte(info.primitiveType))
+    
+  of btSystemClass:
+    # Write length-prefixed class name
+    writeLengthPrefixedString(outp, info.className.value)
+    
+  of btClass:
+    # Write complete ClassTypeInfo structure
+    writeClassTypeInfo(outp, info.classInfo)
+    
+  of btString, btObject, btObjectArray, btStringArray:
+    # No additional data to write
+    discard
+
 proc readMemberTypeInfo*(inp: InputStream, memberCount: int): MemberTypeInfo =
   ## Reads MemberTypeInfo structure from stream.
   ## memberCount specifies number of members to read types for.
@@ -98,23 +149,7 @@ proc readMemberTypeInfo*(inp: InputStream, memberCount: int): MemberTypeInfo =
 
   # Then read additional info based on binary type
   for btype in result.binaryTypes:
-    var addInfo = AdditionalTypeInfo(kind: btype)
-    
-    case btype
-    of btPrimitive, btPrimitiveArray:
-      if not inp.readable:
-        raise newException(IOError, "Missing primitive type info")
-      addInfo.primitiveType = PrimitiveType(inp.read())
-      
-    of btSystemClass:
-      addInfo.className = readLengthPrefixedString(inp)
-      
-    of btClass:
-      addInfo.classInfo = readClassTypeInfo(inp)
-      
-    of btString, btObject, btObjectArray, btStringArray:
-      discard # No additional info needed
-      
+    let addInfo = readAdditionalTypeInfo(inp, btype)      
     result.additionalInfos.add(addInfo)
 
 proc writeMemberTypeInfo*(outp: OutputStream, mti: MemberTypeInfo) =
@@ -126,18 +161,7 @@ proc writeMemberTypeInfo*(outp: OutputStream, mti: MemberTypeInfo) =
     
   # Write additional type info where needed
   for addInfo in mti.additionalInfos:
-    case addInfo.kind
-    of btPrimitive, btPrimitiveArray:
-      outp.write(byte(addInfo.primitiveType))
-      
-    of btSystemClass:
-      writeLengthPrefixedString(outp, addInfo.className.value)
-      
-    of btClass:
-      writeClassTypeInfo(outp, addInfo.classInfo)
-      
-    else:
-      discard # No additional info to write
+    writeAdditionalTypeInfo(outp, addInfo)
 
 proc readClassWithMembersAndTypes*(inp: InputStream): ClassWithMembersAndTypes =
   ## Reads ClassWithMembersAndTypes record from stream

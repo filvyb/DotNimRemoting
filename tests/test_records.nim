@@ -36,7 +36,7 @@ suite "Class Records Tests":
     let memberTypes = MemberTypeInfo(
       binaryTypes: @[btPrimitive, btPrimitive],
       additionalInfos: @[
-        AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptString),
+        AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt64),
         AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32)
       ]
     )
@@ -52,7 +52,7 @@ suite "Class Records Tests":
     check decoded.binaryTypes[0] == btPrimitive
     check decoded.binaryTypes[1] == btPrimitive
     check decoded.additionalInfos[0].kind == btPrimitive
-    check decoded.additionalInfos[0].primitiveType == ptString
+    check decoded.additionalInfos[0].primitiveType == ptInt64
     check decoded.additionalInfos[1].kind == btPrimitive
     check decoded.additionalInfos[1].primitiveType == ptInt32
 
