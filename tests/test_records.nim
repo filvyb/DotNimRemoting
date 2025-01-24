@@ -1,6 +1,6 @@
 import unittest
 import faststreams/[inputs, outputs]
-import msnrbf/[enums, types, records/class, records/serialization]
+import msnrbf/[enums, types, records/class, records/serialization, records/arrays]
 
 suite "Class Records Tests":
   test "Basic ClassInfo serialization/deserialization":
@@ -403,3 +403,227 @@ suite "Other Records Tests":
     var outStream = memoryOutput()
     expect ValueError: 
       writeMessageFlags(outStream, invalidFlags)
+
+suite "Array Records Tests":
+  test "Basic ArrayInfo serialization/deserialization":
+    let info = ArrayInfo(
+      objectId: 1,
+      length: 4
+    )
+    
+    var outStream = memoryOutput()
+    writeArrayInfo(outStream, info)
+    let serialized = outStream.getOutput(seq[byte])
+    
+    let inStream = memoryInput(serialized)
+    let decoded = readArrayInfo(inStream)
+    
+    check decoded.objectId == 1
+    check decoded.length == 4
+
+  test "ArraySingleObject serialization/deserialization":
+    # From docs example:
+    # ArraySingleObject record with length 1
+    let arr = ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(
+        objectId: 1,
+        length: 1
+      )
+    )
+    
+    var outStream = memoryOutput()
+    writeArraySingleObject(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    # Verify against expected bytes
+    check serialized.len == 9  # 1 byte type + 8 bytes array info
+    check serialized[0] == byte(rtArraySingleObject)  # Record type
+    
+    let inStream = memoryInput(serialized)
+    let decoded = readArraySingleObject(inStream)
+    
+    check decoded.recordType == rtArraySingleObject
+    check decoded.arrayInfo.objectId == 1
+    check decoded.arrayInfo.length == 1
+
+  test "ArraySinglePrimitive serialization/deserialization":
+    let arr = ArraySinglePrimitive(
+      recordType: rtArraySinglePrimitive,
+      arrayInfo: ArrayInfo(
+        objectId: 1,
+        length: 3
+      ),
+      primitiveType: ptInt32
+    )
+    
+    var outStream = memoryOutput()
+    writeArraySinglePrimitive(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readArraySinglePrimitive(inStream)
+    
+    check decoded.recordType == rtArraySinglePrimitive
+    check decoded.arrayInfo.objectId == 1
+    check decoded.arrayInfo.length == 3
+    check decoded.primitiveType == ptInt32
+
+  test "Invalid primitive type for ArraySinglePrimitive":
+    let arr = ArraySinglePrimitive(
+      recordType: rtArraySinglePrimitive,
+      arrayInfo: ArrayInfo(objectId: 1, length: 1),
+      primitiveType: ptString  # String not allowed
+    )
+    
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeArraySinglePrimitive(outStream, arr)
+
+  test "ArraySingleString serialization/deserialization":
+    let arr = ArraySingleString(
+      recordType: rtArraySingleString,
+      arrayInfo: ArrayInfo(
+        objectId: 1,
+        length: 2
+      )
+    )
+    
+    var outStream = memoryOutput()
+    writeArraySingleString(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readArraySingleString(inStream)
+    
+    check decoded.recordType == rtArraySingleString
+    check decoded.arrayInfo.objectId == 1
+    check decoded.arrayInfo.length == 2
+
+  test "BinaryArray single-dimensional serialization/deserialization":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingle,
+      rank: 1,
+      lengths: @[int32(3)],
+      typeEnum: btPrimitive,
+      additionalTypeInfo: AdditionalTypeInfo(
+        kind: btPrimitive,
+        primitiveType: ptInt32
+      )
+    )
+    
+    var outStream = memoryOutput()
+    writeBinaryArray(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readBinaryArray(inStream)
+    
+    check decoded.recordType == rtBinaryArray
+    check decoded.objectId == 1
+    check decoded.binaryArrayType == batSingle
+    check decoded.rank == 1
+    check decoded.lengths == @[int32(3)]
+    check decoded.typeEnum == btPrimitive
+    check decoded.additionalTypeInfo.kind == btPrimitive
+    check decoded.additionalTypeInfo.primitiveType == ptInt32
+
+  test "BinaryArray with lower bounds":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingleOffset,
+      rank: 2,
+      lengths: @[int32(2), int32(3)],
+      lowerBounds: @[int32(1), int32(1)],
+      typeEnum: btString,
+      additionalTypeInfo: AdditionalTypeInfo(kind: btString)
+    )
+    
+    var outStream = memoryOutput()
+    writeBinaryArray(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readBinaryArray(inStream)
+    
+    check decoded.recordType == rtBinaryArray
+    check decoded.binaryArrayType == batSingleOffset
+    check decoded.rank == 2
+    check decoded.lengths == @[int32(2), int32(3)]
+    check decoded.lowerBounds == @[int32(1), int32(1)]
+    check decoded.typeEnum == btString
+
+  test "BinaryArray with system class type":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingle,
+      rank: 1,
+      lengths: @[int32(2)],
+      typeEnum: btSystemClass,
+      additionalTypeInfo: AdditionalTypeInfo(
+        kind: btSystemClass,
+        className: LengthPrefixedString(value: "System.String")
+      )
+    )
+    
+    var outStream = memoryOutput()
+    writeBinaryArray(outStream, arr)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readBinaryArray(inStream)
+    
+    check decoded.recordType == rtBinaryArray
+    check decoded.typeEnum == btSystemClass
+    check decoded.additionalTypeInfo.kind == btSystemClass
+    check decoded.additionalTypeInfo.className.value == "System.String"
+
+  test "Invalid array rank":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingle,
+      rank: -1,  # Invalid - must be non-negative
+      lengths: @[],
+      typeEnum: btString,
+      additionalTypeInfo: AdditionalTypeInfo(kind: btString)
+    )
+    
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeBinaryArray(outStream, arr)
+
+  test "Mismatched lengths and rank":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingle,
+      rank: 2,
+      lengths: @[int32(1)],  # Should have 2 lengths for rank 2
+      typeEnum: btString,
+      additionalTypeInfo: AdditionalTypeInfo(kind: btString)
+    )
+    
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeBinaryArray(outStream, arr)
+
+  test "Missing lower bounds for offset array":
+    let arr = BinaryArray(
+      recordType: rtBinaryArray,
+      objectId: 1,
+      binaryArrayType: batSingleOffset,
+      rank: 1,
+      lengths: @[int32(1)],
+      # Missing lowerBounds
+      typeEnum: btString,
+      additionalTypeInfo: AdditionalTypeInfo(kind: btString)
+    )
+    
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeBinaryArray(outStream, arr)
