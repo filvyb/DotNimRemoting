@@ -51,7 +51,7 @@ template readValueImpl[T](context: string, inp: InputStream): T =
 
 template readValue*[T](inp: InputStream): T =
   ## Wrapper that adds line information to context
-  readValueImpl[T]("line " & $lineInfoObj().line, inp)
+  readValueImpl[T]("at " & instantiationInfo().filename & ":" & $instantiationInfo().line, inp)
 
 template readValueWithContext*[T](inp: InputStream, context: string): T =
   ## Allows adding custom context to error message

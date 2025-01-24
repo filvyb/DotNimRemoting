@@ -38,10 +38,11 @@ type
 
   PrimitiveType* = enum
     ## Section 2.1.2.3 PrimitiveTypeEnumeration
+    ptUnused0 = 0 # Unused because Nim enums must start at 0
     ptBoolean = 1 # Boolean
     ptByte = 2 # unsigned 8-bit
     ptChar = 3 # Unicode character
-    ptUnused = 4 # Unused
+    ptUnused = 4 # Unused in MS-NRBF
     ptDecimal = 5 # LengthPrefixedString
     ptDouble = 6 # IEEE 754 64-bit
     ptInt16 = 7 # signed 16-bit

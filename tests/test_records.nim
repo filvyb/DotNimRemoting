@@ -1,6 +1,6 @@
 import unittest
 import faststreams/[inputs, outputs]
-import msnrbf/[enums, types, records/class, records/serialization, records/arrays]
+import msnrbf/[enums, types, records/class, records/serialization, records/arrays, records/member]
 
 suite "Class Records Tests":
   test "Basic ClassInfo serialization/deserialization":
@@ -627,3 +627,239 @@ suite "Array Records Tests":
     var outStream = memoryOutput()
     expect ValueError:
       writeBinaryArray(outStream, arr)
+
+suite "Member Reference Records Tests":
+  test "MemberPrimitiveTyped serialization/deserialization":
+    let member = MemberPrimitiveTyped(
+      recordType: rtMemberPrimitiveTyped,
+      value: PrimitiveValue(
+        kind: ptInt32,
+        int32Val: 42
+      )
+    )
+
+    var outStream = memoryOutput()
+    writeMemberPrimitiveTyped(outStream, member) 
+    let serialized = outStream.getOutput(seq[byte])
+
+    # Basic byte checks - record type, primitive type, 4 byte int32 value
+    check serialized.len == 6
+    check serialized[0] == byte(rtMemberPrimitiveTyped)
+    check serialized[1] == byte(ptInt32)
+    # 42 in little endian: 2A 00 00 00
+    check serialized[2] == 0x2A'u8
+    check serialized[3] == 0x00'u8
+    check serialized[4] == 0x00'u8
+    check serialized[5] == 0x00'u8
+
+    let inStream = memoryInput(serialized)
+    let decoded = readMemberPrimitiveTyped(inStream)
+
+    check decoded.recordType == rtMemberPrimitiveTyped
+    check decoded.value.kind == ptInt32
+    check decoded.value.int32Val == 42
+
+  test "MemberPrimitiveUnTyped serialization/deserialization":
+    let member = MemberPrimitiveUnTyped(
+      value: PrimitiveValue(
+        kind: ptInt32,
+        int32Val: 42
+      )
+    )
+
+    var outStream = memoryOutput()
+    writeMemberPrimitiveUnTyped(outStream, member)
+    let serialized = outStream.getOutput(seq[byte])
+
+    # Only contains value bytes, no type info
+    check serialized.len == 4
+    # 42 in little endian: 2A 00 00 00
+    check serialized[0] == 0x2A'u8
+    check serialized[1] == 0x00'u8
+    check serialized[2] == 0x00'u8
+    check serialized[3] == 0x00'u8
+
+    let inStream = memoryInput(serialized)
+    let decoded = readMemberPrimitiveUnTyped(inStream, ptInt32)
+
+    check decoded.value.kind == ptInt32
+    check decoded.value.int32Val == 42
+
+  test "MemberReference serialization/deserialization":
+    # Example from MS-NRBF docs:
+    # 09 02 00 00 00
+    # 09 - MemberReference record
+    # 02 00 00 00 - idRef = 2
+    let reference = MemberReference(
+      recordType: rtMemberReference,
+      idRef: 2
+    )
+
+    var outStream = memoryOutput()
+    writeMemberReference(outStream, reference)
+    let serialized = outStream.getOutput(seq[byte])
+
+    check serialized.len == 5
+    check serialized[0] == 0x09'u8  # rtMemberReference
+    check serialized[1] == 0x02'u8  # idRef LSB
+    check serialized[2] == 0x00'u8
+    check serialized[3] == 0x00'u8
+    check serialized[4] == 0x00'u8  # idRef MSB
+
+    let inStream = memoryInput(serialized)
+    let decoded = readMemberReference(inStream)
+
+    check decoded.recordType == rtMemberReference
+    check decoded.idRef == 2
+
+  test "ObjectNull serialization/deserialization":
+    # Example from MS-NRBF docs:
+    # 0A - Single ObjectNull record
+    let nullObj = ObjectNull(recordType: rtObjectNull)
+
+    var outStream = memoryOutput()
+    writeObjectNull(outStream, nullObj)
+    let serialized = outStream.getOutput(seq[byte])
+
+    check serialized.len == 1
+    check serialized[0] == 0x0A'u8  # rtObjectNull
+
+    let inStream = memoryInput(serialized)
+    let decoded = readObjectNull(inStream)
+
+    check decoded.recordType == rtObjectNull
+
+  test "ObjectNullMultiple serialization/deserialization":
+    # Example from MS-NRBF docs:
+    # 0E 03 00 00 00 - Three consecutive nulls
+    let nullMultiple = ObjectNullMultiple(
+      recordType: rtObjectNullMultiple,
+      nullCount: 3
+    )
+
+    var outStream = memoryOutput()
+    writeObjectNullMultiple(outStream, nullMultiple)
+    let serialized = outStream.getOutput(seq[byte])
+
+    check serialized.len == 5
+    check serialized[0] == 0x0E'u8  # rtObjectNullMultiple
+    check serialized[1] == 0x03'u8  # nullCount LSB
+    check serialized[2] == 0x00'u8
+    check serialized[3] == 0x00'u8
+    check serialized[4] == 0x00'u8  # nullCount MSB
+
+    let inStream = memoryInput(serialized)
+    let decoded = readObjectNullMultiple(inStream)
+
+    check decoded.recordType == rtObjectNullMultiple
+    check decoded.nullCount == 3
+
+  test "ObjectNullMultiple256 serialization/deserialization":
+    # Example from MS-NRBF docs:
+    # 0D FF - 255 consecutive nulls
+    let nullMultiple256 = ObjectNullMultiple256(
+      recordType: rtObjectNullMultiple256,
+      nullCount: 255
+    )
+
+    var outStream = memoryOutput()
+    writeObjectNullMultiple256(outStream, nullMultiple256)
+    let serialized = outStream.getOutput(seq[byte])
+
+    check serialized.len == 2
+    check serialized[0] == 0x0D'u8  # rtObjectNullMultiple256
+    check serialized[1] == 0xFF'u8  # nullCount
+
+    let inStream = memoryInput(serialized)
+    let decoded = readObjectNullMultiple256(inStream)
+
+    check decoded.recordType == rtObjectNullMultiple256
+    check decoded.nullCount == 255
+
+  test "BinaryObjectString serialization/deserialization":
+    # Example from MS-NRBF docs:
+    # 06 04 00 00 00 11 4F 6E 65 20 4D 69 63 72 6F 73 6F 66 74 20 57 61 79
+    # 06 - BinaryObjectString record
+    # 04 00 00 00 - objectId = 4
+    # 11 - String length = 17
+    # Rest is "One Microsoft Way"
+    let stringObj = BinaryObjectString(
+      recordType: rtBinaryObjectString,
+      objectId: 4,
+      value: LengthPrefixedString(value: "One Microsoft Way")
+    )
+
+    var outStream = memoryOutput()
+    writeBinaryObjectString(outStream, stringObj)
+    let serialized = outStream.getOutput(seq[byte])
+
+    # Basic validation of the record structure
+    check serialized[0] == 0x06'u8  # rtBinaryObjectString
+    check serialized[1] == 0x04'u8  # objectId LSB
+    check serialized[2] == 0x00'u8
+    check serialized[3] == 0x00'u8
+    check serialized[4] == 0x00'u8  # objectId MSB 
+    check serialized[5] == 0x11'u8  # String length 17
+
+    let inStream = memoryInput(serialized)
+    let decoded = readBinaryObjectString(inStream)
+
+    check decoded.recordType == rtBinaryObjectString
+    check decoded.objectId == 4
+    check decoded.value.value == "One Microsoft Way"
+
+  test "Invalid MemberReference ID":
+    let reference = MemberReference(
+      recordType: rtMemberReference,
+      idRef: 0  # Invalid - must be positive
+    )
+
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeMemberReference(outStream, reference)
+
+  test "Invalid primitive types":
+    let invalidMember = MemberPrimitiveTyped(
+      recordType: rtMemberPrimitiveTyped,
+      value: PrimitiveValue(kind: ptString)  # String not allowed
+    )
+
+    var outStream = memoryOutput()
+    expect ValueError:
+      writeMemberPrimitiveTyped(outStream, invalidMember)
+
+  test "Complex primitive values":
+    let testCases = [
+      PrimitiveValue(kind: ptBoolean, boolVal: true),
+      PrimitiveValue(kind: ptByte, byteVal: 255),
+      PrimitiveValue(kind: ptInt64, int64Val: 1234567890),
+      PrimitiveValue(kind: ptSingle, singleVal: 3.14'f32),
+      PrimitiveValue(kind: ptDouble, doubleVal: 2.71828),
+      PrimitiveValue(kind: ptTimeSpan, timeSpanVal: 36000000000) # 1 hour
+    ]
+
+    for testValue in testCases:
+      let member = MemberPrimitiveTyped(
+        recordType: rtMemberPrimitiveTyped,
+        value: testValue
+      )
+
+      var outStream = memoryOutput()
+      writeMemberPrimitiveTyped(outStream, member)
+      let serialized = outStream.getOutput(seq[byte])
+
+      let inStream = memoryInput(serialized)
+      let decoded = readMemberPrimitiveTyped(inStream)
+
+      check decoded.recordType == rtMemberPrimitiveTyped
+      check decoded.value.kind == testValue.kind
+
+      # Compare actual values based on type
+      case testValue.kind
+      of ptBoolean: check decoded.value.boolVal == testValue.boolVal
+      of ptByte: check decoded.value.byteVal == testValue.byteVal
+      of ptInt64: check decoded.value.int64Val == testValue.int64Val
+      of ptSingle: check decoded.value.singleVal == testValue.singleVal
+      of ptDouble: check decoded.value.doubleVal == testValue.doubleVal
+      of ptTimeSpan: check decoded.value.timeSpanVal == testValue.timeSpanVal
+      else: discard

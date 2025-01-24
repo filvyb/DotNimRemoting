@@ -3,18 +3,52 @@ import ../enums
 import ../types
 
 type
+  PrimitiveValue* = object
+    case kind*: PrimitiveType  # Type tag for the value
+    of ptBoolean:
+      boolVal*: bool
+    of ptByte:
+      byteVal*: uint8
+    of ptChar:
+      charVal*: string # UTF-8 encoded char
+    of ptDouble:
+      doubleVal*: float64
+    of ptInt16:
+      int16Val*: int16
+    of ptUInt16:
+      uint16Val*: uint16
+    of ptInt32:
+      int32Val*: int32
+    of ptUInt32:
+      uint32Val*: uint32
+    of ptInt64:  
+      int64Val*: int64
+    of ptUInt64:
+      uint64Val*: uint64
+    of ptSByte:
+      sbyteVal*: int8
+    of ptSingle:
+      singleVal*: float32
+    of ptTimeSpan:
+      timeSpanVal*: TimeSpan
+    of ptDateTime:
+      dateTimeVal*: DateTime
+    of ptDecimal:
+      decimalVal*: Decimal
+    else:
+      discard # String, Null and Unused not valid for primitive values
+
   MemberPrimitiveTyped* = object
     ## Section 2.5.1 MemberPrimitiveTyped record
     ## Contains a Primitive Type value other than String
     recordType*: RecordType   # Must be rtMemberPrimitiveTyped 
-    primitiveType*: PrimitiveType  # Type of value
-    value*: seq[byte]  # Raw bytes of the value
+    value*: PrimitiveValue    # Strongly typed value
 
   MemberPrimitiveUnTyped* = object
     ## Section 2.5.2 MemberPrimitiveUnTyped record
     ## Most compact record for Primitive Types
     ## No record type enum needed as type is known from context
-    value*: seq[byte]  # Raw value bytes
+    value*: PrimitiveValue
 
   MemberReference* = object
     ## Section 2.5.3 MemberReference record
@@ -64,6 +98,43 @@ proc getPrimitiveTypeSize*(primitiveType: PrimitiveType): Natural =
   else: 0
 
 # Reading procedures
+proc readPrimitiveValue*(inp: InputStream, primitiveType: PrimitiveType): PrimitiveValue =
+  result = PrimitiveValue(kind: primitiveType)
+  case primitiveType
+  of ptBoolean:
+    let b = inp.read
+    result.boolVal = b != 0
+  of ptByte:
+    result.byteVal = uint8(inp.read)
+  of ptChar:
+    result.charVal = readChar(inp)
+  of ptDouble:
+    result.doubleVal = readDouble(inp)
+  of ptInt16:
+    result.int16Val = readValue[int16](inp)
+  of ptUInt16: 
+    result.uint16Val = readValue[uint16](inp)
+  of ptInt32:
+    result.int32Val = readValue[int32](inp)
+  of ptUInt32:
+    result.uint32Val = readValue[uint32](inp)
+  of ptInt64:
+    result.int64Val = readValue[int64](inp)
+  of ptUInt64:
+    result.uint64Val = readValue[uint64](inp)
+  of ptSByte:
+    result.sbyteVal = cast[int8](inp.read)
+  of ptSingle:
+    result.singleVal = readSingle(inp)
+  of ptTimeSpan:
+    result.timeSpanVal = readTimeSpan(inp)
+  of ptDateTime:
+    result.dateTimeVal = readDateTime(inp)
+  of ptDecimal:
+    result.decimalVal = readDecimal(inp)
+  else:
+    raise newException(IOError, "Invalid primitive type: " & $primitiveType)
+
 proc readMemberPrimitiveTyped*(inp: InputStream): MemberPrimitiveTyped =
   ## Reads MemberPrimitiveTyped record from stream
   result.recordType = readRecord(inp)
@@ -72,31 +143,21 @@ proc readMemberPrimitiveTyped*(inp: InputStream): MemberPrimitiveTyped =
 
   if not inp.readable:
     raise newException(IOError, "Missing primitive type")
-  result.primitiveType = PrimitiveType(inp.read)
+  let primitiveType = PrimitiveType(inp.read)
 
   # Validate primitive type
-  if result.primitiveType in {ptString, ptNull}:
-    raise newException(IOError, "Invalid primitive type: " & $result.primitiveType)
+  if primitiveType in {ptString, ptNull, ptUnused}:
+    raise newException(IOError, "Invalid primitive type: " & $primitiveType)
 
-  # Read raw value bytes based on primitive type size 
-  let valueSize = getPrimitiveTypeSize(result.primitiveType)
-  if valueSize > 0:
-    result.value = newSeq[byte](valueSize)
-    if not inp.readInto(result.value):
-      raise newException(IOError, "Failed to read primitive value")
+  result.value = readPrimitiveValue(inp, primitiveType)
 
 proc readMemberPrimitiveUnTyped*(inp: InputStream, primitiveType: PrimitiveType): MemberPrimitiveUnTyped =
   ## Reads MemberPrimitiveUnTyped record from stream
   ## Primitive type must be provided from context
-  if primitiveType in {ptString, ptNull}:
+  if primitiveType in {ptString, ptNull, ptUnused}:
     raise newException(IOError, "Invalid primitive type: " & $primitiveType)
 
-  # Read raw value bytes based on primitive type size
-  let valueSize = getPrimitiveTypeSize(primitiveType)
-  if valueSize > 0:
-    result.value = newSeq[byte](valueSize)
-    if not inp.readInto(result.value):
-      raise newException(IOError, "Failed to read primitive value")
+  result.value = readPrimitiveValue(inp, primitiveType)
 
 proc readMemberReference*(inp: InputStream): MemberReference =
   ## Reads MemberReference record from stream
@@ -147,44 +208,54 @@ proc readBinaryObjectString*(inp: InputStream): BinaryObjectString =
   result.value = readLengthPrefixedString(inp)
 
 # Writing procedures
+proc writePrimitiveValue*(outp: OutputStream, value: PrimitiveValue) =
+  case value.kind
+  of ptBoolean:
+    outp.write(byte(ord(value.boolVal)))
+  of ptByte:
+    outp.write(byte(value.byteVal))
+  of ptChar:
+    writeChar(outp, value.charVal)
+  of ptDouble:
+    writeDouble(outp, value.doubleVal)
+  of ptInt16:
+    writeValue[int16](outp, value.int16Val)
+  of ptUInt16:
+    writeValue[uint16](outp, value.uint16Val)
+  of ptInt32:
+    writeValue[int32](outp, value.int32Val)
+  of ptUInt32:
+    writeValue[uint32](outp, value.uint32Val)
+  of ptInt64:
+    writeValue[int64](outp, value.int64Val)
+  of ptUInt64:
+    writeValue[uint64](outp, value.uint64Val)
+  of ptSByte:
+    outp.write(byte(value.sbyteVal))
+  of ptSingle:
+    writeSingle(outp, value.singleVal) 
+  of ptTimeSpan:
+    writeTimeSpan(outp, value.timeSpanVal)
+  of ptDateTime:
+    writeDateTime(outp, value.dateTimeVal)
+  of ptDecimal:
+    writeDecimal(outp, value.decimalVal)
+  else:
+    raise newException(ValueError, "Invalid primitive type: " & $value.kind)
+
 proc writeMemberPrimitiveTyped*(outp: OutputStream, member: MemberPrimitiveTyped) =
   ## Writes MemberPrimitiveTyped record to stream
   if member.recordType != rtMemberPrimitiveTyped:
     raise newException(ValueError, "Invalid member primitive typed record type")
 
-  # Validate primitive type
-  if member.primitiveType in {ptString, ptNull}:
-    raise newException(ValueError, "Invalid primitive type: " & $member.primitiveType)
-
-  # Validate value size matches primitive type
-  let expectedSize = getPrimitiveTypeSize(member.primitiveType)
-  if expectedSize > 0 and member.value.len != expectedSize:
-    raise newException(ValueError, "Invalid value size for primitive type " & 
-                      $member.primitiveType & ": expected " & $expectedSize & 
-                      " bytes, got " & $member.value.len)
-
   writeRecord(outp, member.recordType)
-  outp.write(byte(member.primitiveType))
-  if member.value.len > 0:
-    outp.write(member.value)
+  outp.write(byte(member.value.kind))
+  writePrimitiveValue(outp, member.value)
 
-proc writeMemberPrimitiveUnTyped*(outp: OutputStream, member: MemberPrimitiveUnTyped, 
-                                 primitiveType: PrimitiveType) =
+proc writeMemberPrimitiveUnTyped*(outp: OutputStream, member: MemberPrimitiveUnTyped) =
   ## Writes MemberPrimitiveUnTyped record to stream
-  ## Primitive type must be provided from context
-  if primitiveType in {ptString, ptNull}:
-    raise newException(ValueError, "Invalid primitive type: " & $primitiveType)
-
-  # Validate value size matches primitive type
-  let expectedSize = getPrimitiveTypeSize(primitiveType)
-  if expectedSize > 0 and member.value.len != expectedSize:
-    raise newException(ValueError, "Invalid value size for primitive type " & 
-                      $primitiveType & ": expected " & $expectedSize & 
-                      " bytes, got " & $member.value.len)
-
-  # Write just the value - no record type or type enum needed
-  if member.value.len > 0:
-    outp.write(member.value)
+  ## Type comes from the PrimitiveValue variant
+  writePrimitiveValue(outp, member.value)
 
 proc writeMemberReference*(outp: OutputStream, refer: MemberReference) =
   ## Writes MemberReference record to stream
@@ -236,15 +307,19 @@ proc writeBinaryObjectString*(outp: OutputStream, obj: BinaryObjectString) =
   writeLengthPrefixedString(outp, obj.value.value)
 
 # Helper to determine if a primitive value can be written untyped
-proc canWriteUntyped*(value: MemberPrimitiveTyped): bool =
+proc canWriteUntyped*(value: PrimitiveValue): bool =
   ## Returns true if the primitive value can be written in untyped format
   ## This requires:
-  ## 1. Known fixed size type (not Decimal)
-  ## 2. Not String or Null type
-  case value.primitiveType
-  of ptBoolean, ptByte, ptChar, ptDouble, ptInt16, ptUInt16,
-     ptInt32, ptUInt32, ptInt64, ptUInt64, ptSByte, ptSingle,
-     ptTimeSpan, ptDateTime:
-    result = true
+  ## 1. Fixed size type (not Decimal)
+  ## 2. Not String, Null or Unused type
+  case value.kind
+  of ptString, ptNull, ptUnused:
+    false
+  of ptDecimal:
+    false  # Variable length
   else:
-    result = false
+    true   # All other primitive types are fixed size
+
+proc canWriteUntyped*(member: MemberPrimitiveTyped): bool =
+  ## Helper that works directly with MemberPrimitiveTyped
+  canWriteUntyped(member.value)
