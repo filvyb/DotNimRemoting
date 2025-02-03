@@ -22,6 +22,9 @@ type
     rtArraySinglePrimitive = 15   # 0x0F
     rtArraySingleObject = 16      # 0x10
     rtArraySingleString = 17      # 0x11
+    rtFilling18 = 18              # Enum filler so Nim doesn't complain
+    rtFilling19 = 19              # Enum filler so Nim doesn't complain
+    rtFilling20 = 20              # Enum filler so Nim doesn't complain
     rtMethodCall = 21             # 0x15
     rtMethodReturn = 22           # 0x16
 

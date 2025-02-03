@@ -3,6 +3,7 @@ import enums
 import types
 import records/[arrays, class, member, methodinv, serialization]
 import tables
+import options
 
 type
   RemotingMessage* = ref object
@@ -10,8 +11,8 @@ type
     ## This is a root object for a complete message exchange
     header*: SerializationHeaderRecord     # Required start header
     referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
-    methodCall*: BinaryMethodCall          # Required method call
-    methodReturn*: BinaryMethodReturn      # Or method return
+    methodCall*: Option[BinaryMethodCall]        # Required method call
+    methodReturn*: Option[BinaryMethodReturn]    # Or method return
     methodCallArray*: seq[ValueWithCode]   # Optional method call array
     tail*: MessageEnd                      # Required message end marker
 
@@ -274,11 +275,11 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   case methodType:
   of rtMethodCall:
     let (call, array) = readMethodCall(inp, ctx)
-    result.methodCall = call
+    result.methodCall = some(call)
     result.methodCallArray = array
   of rtMethodReturn:
     let (ret, array) = readMethodReturn(inp, ctx)
-    result.methodReturn = ret
+    result.methodReturn = some(ret)
     result.methodCallArray = array
   else:
     raise newException(IOError, "Expected MethodCall or MethodReturn, got " & $methodType)
@@ -297,3 +298,153 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
     result.referencedRecords.add(readReferenceable(inp, ctx))
 
   raise newException(IOError, "Missing MessageEnd")
+
+proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord) = 
+  ## Writes a referenceable record (Classes/Arrays/BinaryObjectString)
+  ## Section 2.7 grammar: referenceable = Classes/Arrays/BinaryObjectString
+
+  case record.kind:
+  of rtClassWithId..rtClassWithMembersAndTypes:
+    case record.classRecord.kind:
+    of rtClassWithId:
+      writeClassWithId(outp, record.classRecord.classWithId)
+    of rtSystemClassWithMembers:
+      writeSystemClassWithMembers(outp, record.classRecord.systemClassWithMembers)
+    of rtClassWithMembers:
+      writeClassWithMembers(outp, record.classRecord.classWithMembers)
+    of rtSystemClassWithMembersAndTypes:
+      writeSystemClassWithMembersAndTypes(outp, record.classRecord.systemClassWithMembersAndTypes)
+    of rtClassWithMembersAndTypes:
+      writeClassWithMembersAndTypes(outp, record.classRecord.classWithMembersAndTypes)
+    else: discard
+
+  of rtBinaryArray..rtArraySingleString:
+    case record.arrayRecord.kind:
+    of rtBinaryArray:
+      writeBinaryArray(outp, record.arrayRecord.binaryArray)
+    of rtArraySinglePrimitive:
+      writeArraySinglePrimitive(outp, record.arrayRecord.arraySinglePrimitive)
+    of rtArraySingleObject:
+      writeArraySingleObject(outp, record.arrayRecord.arraySingleObject)
+    of rtArraySingleString:
+      writeArraySingleString(outp, record.arrayRecord.arraySingleString)
+    else: discard
+
+  of rtBinaryObjectString:
+    writeBinaryObjectString(outp, record.stringRecord)
+
+  else:
+    raise newException(ValueError, "Invalid referenceable record type: " & $record.kind)
+
+proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[ValueWithCode] = @[]) =
+  ## Writes a method call + optional array
+  ## Section 2.7: methodCall = 0*1(BinaryLibrary) BinaryMethodCall 0*1(callArray)
+  
+  writeBinaryMethodCall(outp, call)
+
+  # Write call array if specified in flags
+  if MessageFlag.ArgsInArray in call.messageEnum or 
+     MessageFlag.ContextInArray in call.messageEnum:
+    if array.len == 0:
+      raise newException(ValueError, "Call array expected but none provided")
+      
+    let arrayInfo = ArrayInfo(
+      objectId: 1, # Object ID should be managed by a context
+      length: array.len.int32
+    )
+    let arrayObj = ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: arrayInfo
+    )
+    writeArraySingleObject(outp, arrayObj)
+    
+    # Write array values
+    for value in array:
+      writeValueWithCode(outp, value)
+
+proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[ValueWithCode] = @[]) =
+  ## Writes a method return + optional array
+  ## Section 2.7: methodReturn = 0*1(BinaryLibrary) BinaryMethodReturn 0*1(callArray)
+
+  writeBinaryMethodReturn(outp, ret)
+
+  # Write return array if specified in flags
+  if MessageFlag.ReturnValueInArray in ret.messageEnum or
+     MessageFlag.ArgsInArray in ret.messageEnum or
+     MessageFlag.ContextInArray in ret.messageEnum:
+    if array.len == 0:
+      raise newException(ValueError, "Return array expected but none provided")
+      
+    let arrayInfo = ArrayInfo(
+      objectId: 1, # Object ID should be managed by a context  
+      length: array.len.int32
+    )
+    let arrayObj = ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: arrayInfo
+    )
+    writeArraySingleObject(outp, arrayObj)
+    
+    # Write array values
+    for value in array:
+      writeValueWithCode(outp, value)
+
+proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage) =
+  ## Writes complete remoting message following MS-NRBF grammar
+  ## Section 2.7: remotingMessage = SerializationHeader *(referenceable) 
+  ##                                (methodCall/methodReturn) *(referenceable) MessageEnd
+
+  # Validate message
+  if msg.header.recordType != rtSerializedStreamHeader:
+    raise newException(ValueError, "Invalid header record type")
+
+  if msg.tail.recordType != rtMessageEnd:
+    raise newException(ValueError, "Invalid tail record type")
+
+  if msg.methodCall.isNone and msg.methodReturn.isNone:
+    raise newException(ValueError, "Message must have either method call or return")
+
+  if msg.methodCall.isSome and msg.methodReturn.isSome:
+    raise newException(ValueError, "Message cannot have both method call and return")
+
+  # Write header
+  writeSerializationHeader(outp, msg.header)
+
+  # Write preceding referenceable records
+  for record in msg.referencedRecords:
+    writeReferenceable(outp, record)
+
+  # Write method call or return with array
+  if msg.methodCall.isSome:
+    writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray)
+  else:
+    writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray)
+
+  # Write tail
+  writeMessageEnd(outp, msg.tail)
+
+proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
+                        methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
+                        callArray: seq[ValueWithCode] = @[],
+                        refs: seq[ReferenceableRecord] = @[]): RemotingMessage =
+  ## Creates a new RemotingMessage with required header and tail
+  result = RemotingMessage(
+    header: SerializationHeaderRecord(
+      recordType: rtSerializedStreamHeader,
+      rootId: 1,        # Root ID should be managed by context
+      headerId: -1,     # Header ID should be managed by context  
+      majorVersion: 1,  # Per spec
+      minorVersion: 0   # Per spec
+    ),
+    methodCall: methodCall,
+    methodReturn: methodReturn,
+    methodCallArray: callArray,
+    referencedRecords: refs,
+    tail: MessageEnd(recordType: rtMessageEnd)
+  )
+
+  # Validate message content
+  if methodCall.isNone and methodReturn.isNone:
+    raise newException(ValueError, "Must provide either method call or return")
+  if methodCall.isSome and methodReturn.isSome: 
+    raise newException(ValueError, "Cannot have both method call and return")
