@@ -146,7 +146,7 @@ proc readLengthPrefixedString*(inp: InputStream): LengthPrefixedString =
     else:
       raise newException(IOError, "Incomplete string data")
 
-proc validateDecimalFormat(s: string): bool =
+proc validateDecimalFormat*(s: string): bool =
   if s.len == 0: return false
   
   var pos = 0
