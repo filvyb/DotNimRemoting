@@ -42,11 +42,6 @@ proc newStringValueWithCode*(value: string): StringValueWithCode =
   let strVal = PrimitiveValue(kind: ptString, stringVal: LengthPrefixedString(value: value))
   result = StringValueWithCode(primitiveType: ptString, value: strVal)
 
-converter toValueWithCode*(strVal: StringValueWithCode): ValueWithCode =
-  ## Converts StringValueWithCode to ValueWithCode
-  result.primitiveType = strVal.primitiveType
-  result.value = strVal.value
-
 # Reading procedures
 proc readValueWithCode*(inp: InputStream): ValueWithCode =
   ## Reads ValueWithCode structure from stream

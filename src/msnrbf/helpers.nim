@@ -94,19 +94,16 @@ proc dateTimeValue*(ticks: int64, kind: uint8 = 0): PrimitiveValue =
 # Value conversion helpers
 #
 
-proc toValueWithCode*(value: PrimitiveValue): ValueWithCode =
+converter toValueWithCode*(value: PrimitiveValue): ValueWithCode =
   ## Convert PrimitiveValue to ValueWithCode
-  ValueWithCode(
-    primitiveType: value.kind,
-    value: value
-  )
+  result.primitiveType = value.kind
+  result.value = value
 
-proc toStringValueWithCode*(value: string): StringValueWithCode =
-  ## Create StringValueWithCode from string
-  StringValueWithCode(
-    primitiveType: ptString,
-    stringValue: LengthPrefixedString(value: value)
-  )
+converter toValueWithCode*(strVal: StringValueWithCode): ValueWithCode =
+  ## Converts StringValueWithCode to ValueWithCode
+  ## (not sure if this is needed since StringValueWithCode inherits from ValueWithCode)
+  result.primitiveType = strVal.primitiveType
+  result.value = strVal.value
 
 #
 # Method call/return creation helpers
@@ -124,8 +121,8 @@ proc methodCallBasic*(methodName, typeName: string, argsInline: seq[PrimitiveVal
   result = BinaryMethodCall(
     recordType: rtMethodCall,
     messageEnum: flags,
-    methodName: toStringValueWithCode(methodName),
-    typeName: toStringValueWithCode(typeName)
+    methodName: newStringValueWithCode(methodName),
+    typeName: newStringValueWithCode(typeName)
   )
   
   if argsInline.len > 0:
@@ -141,8 +138,8 @@ proc methodCallArrayArgs*(methodName, typeName: string): (BinaryMethodCall, seq[
   result[0] = BinaryMethodCall(
     recordType: rtMethodCall,
     messageEnum: flags,
-    methodName: toStringValueWithCode(methodName),
-    typeName: toStringValueWithCode(typeName)
+    methodName: newStringValueWithCode(methodName),
+    typeName: newStringValueWithCode(typeName)
   )
   
   # Return empty array for caller to populate
