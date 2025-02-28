@@ -90,6 +90,10 @@ proc dateTimeValue*(ticks: int64, kind: uint8 = 0): PrimitiveValue =
     dateTimeVal: DateTime(ticks: ticks, kind: kind)
   )
 
+proc stringValue*(value: string): PrimitiveValue =
+  ## Create a string primitive value
+  PrimitiveValue(kind: ptString, stringVal: LengthPrefixedString(value: value))
+
 #
 # Value conversion helpers
 #
