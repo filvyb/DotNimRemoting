@@ -427,6 +427,12 @@ proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMetho
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
                         callArray: seq[ValueWithCode] = @[],
                         refs: seq[ReferenceableRecord] = @[]): RemotingMessage =
+  # Validate that exactly one of methodCall or methodReturn is provided
+  if methodCall.isNone and methodReturn.isNone:
+    raise newException(ValueError, "Must provide either method call or return")
+  if methodCall.isSome and methodReturn.isSome:
+    raise newException(ValueError, "Cannot have both method call and return")
+
   ## Creates a new RemotingMessage with required header and tail
   result = RemotingMessage(
     header: SerializationHeaderRecord(
@@ -443,8 +449,27 @@ proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMetho
     tail: MessageEnd(recordType: rtMessageEnd)
   )
 
-  # Validate message content
-  if methodCall.isNone and methodReturn.isNone:
-    raise newException(ValueError, "Must provide either method call or return")
-  if methodCall.isSome and methodReturn.isSome: 
-    raise newException(ValueError, "Cannot have both method call and return")
+  # Adjust rootId and headerId based on methodCall
+  if methodCall.isSome:
+    let call = methodCall.get
+    if MessageFlag.ArgsInArray in call.messageEnum or MessageFlag.ContextInArray in call.messageEnum:
+      if callArray.len == 0:
+        raise newException(ValueError, "Call array expected but none provided")
+      result.header.rootId = 1    # ObjectId of the ArraySingleObject
+      result.header.headerId = -1
+    else:
+      result.header.rootId = 0
+      result.header.headerId = 0
+  # Adjust rootId and headerId based on methodReturn
+  elif methodReturn.isSome:
+    let ret = methodReturn.get
+    if MessageFlag.ReturnValueInArray in ret.messageEnum or
+       MessageFlag.ArgsInArray in ret.messageEnum or
+       MessageFlag.ContextInArray in ret.messageEnum:
+      if callArray.len == 0:
+        raise newException(ValueError, "Return array expected but none provided")
+      result.header.rootId = 1    # ObjectId of the ArraySingleObject
+      result.header.headerId = -1
+    else:
+      result.header.rootId = 0
+      result.header.headerId = 0
