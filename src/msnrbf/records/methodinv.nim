@@ -10,11 +10,9 @@ type
     primitiveType*: PrimitiveType  # Identifies the type of data
     value*: PrimitiveValue        # The actual primitive value
 
-  StringValueWithCode* = object
+  StringValueWithCode* = ValueWithCode
     ## Section 2.2.2.2 StringValueWithCode structure
     ## ValueWithCode specifically for String type
-    primitiveType*: PrimitiveType  # Must be ptString (18)
-    stringValue*: LengthPrefixedString  # The string value
 
   ArrayOfValueWithCode* = seq[ValueWithCode]
     ## Section 2.2.2.3 ArrayOfValueWithCode structure
@@ -39,6 +37,16 @@ type
     callContext*: StringValueWithCode  # Optional Logical Call ID
     args*: ArrayOfValueWithCode  # Optional output arguments
 
+proc newStringValueWithCode*(value: string): StringValueWithCode =
+  ## Creates new StringValueWithCode structure
+  let strVal = PrimitiveValue(kind: ptString, stringVal: LengthPrefixedString(value: value))
+  result = StringValueWithCode(primitiveType: ptString, value: strVal)
+
+converter toValueWithCode*(strVal: StringValueWithCode): ValueWithCode =
+  ## Converts StringValueWithCode to ValueWithCode
+  result.primitiveType = strVal.primitiveType
+  result.value = strVal.value
+
 # Reading procedures
 proc readValueWithCode*(inp: InputStream): ValueWithCode =
   ## Reads ValueWithCode structure from stream
@@ -57,7 +65,8 @@ proc readStringValueWithCode*(inp: InputStream): StringValueWithCode =
   if result.primitiveType != ptString:
     raise newException(IOError, "Expected String primitive type (18)")
     
-  result.stringValue = readLengthPrefixedString(inp)
+  let strVal = PrimitiveValue(kind: ptString, stringVal: readLengthPrefixedString(inp))
+  result.value = strVal
 
 proc readArrayOfValueWithCode*(inp: InputStream): ArrayOfValueWithCode =
   ## Reads array of ValueWithCode from stream
@@ -119,7 +128,7 @@ proc writeStringValueWithCode*(outp: OutputStream, value: StringValueWithCode) =
     raise newException(ValueError, "Expected String primitive type (18)")
   
   outp.write(byte(value.primitiveType))
-  writeLengthPrefixedString(outp, value.stringValue.value)
+  writeLengthPrefixedString(outp, value.value.stringVal.value)
 
 proc writeArrayOfValueWithCode*(outp: OutputStream, values: seq[ValueWithCode]) =
   ## Writes array of ValueWithCode to stream prefixed with length

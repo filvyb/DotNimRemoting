@@ -35,8 +35,10 @@ type
       dateTimeVal*: DateTime
     of ptDecimal:
       decimalVal*: Decimal
+    of ptString:
+      stringVal*: LengthPrefixedString
     else:
-      discard # String, Null and Unused not valid for primitive values
+      discard # Null and Unused not valid for primitive values
 
   MemberPrimitiveTyped* = object
     ## Section 2.5.1 MemberPrimitiveTyped record
@@ -132,6 +134,8 @@ proc readPrimitiveValue*(inp: InputStream, primitiveType: PrimitiveType): Primit
     result.dateTimeVal = readDateTime(inp)
   of ptDecimal:
     result.decimalVal = readDecimal(inp)
+  of ptString:
+    result.stringVal = readLengthPrefixedString(inp)
   else:
     raise newException(IOError, "Invalid primitive type: " & $primitiveType)
 
@@ -240,6 +244,8 @@ proc writePrimitiveValue*(outp: OutputStream, value: PrimitiveValue) =
     writeDateTime(outp, value.dateTimeVal)
   of ptDecimal:
     writeDecimal(outp, value.decimalVal)
+  of ptString:
+    writeLengthPrefixedString(outp, value.stringVal.value)
   else:
     raise newException(ValueError, "Invalid primitive type: " & $value.kind)
 
@@ -247,6 +253,8 @@ proc writeMemberPrimitiveTyped*(outp: OutputStream, member: MemberPrimitiveTyped
   ## Writes MemberPrimitiveTyped record to stream
   if member.recordType != rtMemberPrimitiveTyped:
     raise newException(ValueError, "Invalid member primitive typed record type")
+  if member.value.kind in {ptString, ptNull, ptUnused}:
+    raise newException(ValueError, "Invalid primitive type: " & $member.value.kind)
 
   writeRecord(outp, member.recordType)
   outp.write(byte(member.value.kind))
@@ -255,6 +263,9 @@ proc writeMemberPrimitiveTyped*(outp: OutputStream, member: MemberPrimitiveTyped
 proc writeMemberPrimitiveUnTyped*(outp: OutputStream, member: MemberPrimitiveUnTyped) =
   ## Writes MemberPrimitiveUnTyped record to stream
   ## Type comes from the PrimitiveValue variant
+  if member.value.kind in {ptString, ptNull, ptUnused}:
+    raise newException(ValueError, "Invalid primitive type: " & $member.value.kind)
+
   writePrimitiveValue(outp, member.value)
 
 proc writeMemberReference*(outp: OutputStream, refer: MemberReference) =
@@ -309,13 +320,9 @@ proc writeBinaryObjectString*(outp: OutputStream, obj: BinaryObjectString) =
 # Helper to determine if a primitive value can be written untyped
 proc canWriteUntyped*(value: PrimitiveValue): bool =
   ## Returns true if the primitive value can be written in untyped format
-  ## This requires:
-  ## 1. Fixed size type (not Decimal)
-  ## 2. Not String, Null or Unused type
+  ## This requires fixed size type (not Decimal, String, Null or Unused)
   case value.kind
-  of ptString, ptNull, ptUnused:
-    false
-  of ptDecimal:
+  of ptString, ptNull, ptUnused, ptDecimal:
     false  # Variable length
   else:
     true   # All other primitive types are fixed size
