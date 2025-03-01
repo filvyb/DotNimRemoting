@@ -220,7 +220,8 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
   # Handle optional return array based on flags  
   if MessageFlag.ReturnValueInArray in result.ret.messageEnum or
      MessageFlag.ArgsInArray in result.ret.messageEnum or
-     MessageFlag.ContextInArray in result.ret.messageEnum:
+     MessageFlag.ContextInArray in result.ret.messageEnum or
+     MessageFlag.ExceptionInArray in result.ret.messageEnum:
      
     if not inp.readable:
       raise newException(IOError, "End of stream while reading return array")
@@ -371,12 +372,13 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
   # Write return array if specified in flags
   if MessageFlag.ReturnValueInArray in ret.messageEnum or
      MessageFlag.ArgsInArray in ret.messageEnum or
-     MessageFlag.ContextInArray in ret.messageEnum:
+     MessageFlag.ContextInArray in ret.messageEnum or
+     MessageFlag.ExceptionInArray in ret.messageEnum:
     if array.len == 0:
       raise newException(ValueError, "Return array expected but none provided")
       
     let arrayInfo = ArrayInfo(
-      objectId: 1, # Object ID should be managed by a context  
+      objectId: 1, # TODO: Object ID should be managed by a context
       length: array.len.int32
     )
     let arrayObj = ArraySingleObject(
@@ -433,14 +435,13 @@ proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMetho
   if methodCall.isSome and methodReturn.isSome:
     raise newException(ValueError, "Cannot have both method call and return")
 
-  ## Creates a new RemotingMessage with required header and tail
   result = RemotingMessage(
     header: SerializationHeaderRecord(
       recordType: rtSerializedStreamHeader,
-      rootId: 1,        # Root ID should be managed by context
-      headerId: -1,     # Header ID should be managed by context  
-      majorVersion: 1,  # Per spec
-      minorVersion: 0   # Per spec
+      rootId: 0,        # Default, adjusted below
+      headerId: 0,      # Default, adjusted below
+      majorVersion: 1,
+      minorVersion: 0
     ),
     methodCall: methodCall,
     methodReturn: methodReturn,
@@ -449,7 +450,7 @@ proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMetho
     tail: MessageEnd(recordType: rtMessageEnd)
   )
 
-  # Adjust rootId and headerId based on methodCall
+  # Adjust rootId and headerId based on flags
   if methodCall.isSome:
     let call = methodCall.get
     if MessageFlag.ArgsInArray in call.messageEnum or MessageFlag.ContextInArray in call.messageEnum:
@@ -460,12 +461,12 @@ proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMetho
     else:
       result.header.rootId = 0
       result.header.headerId = 0
-  # Adjust rootId and headerId based on methodReturn
   elif methodReturn.isSome:
     let ret = methodReturn.get
     if MessageFlag.ReturnValueInArray in ret.messageEnum or
        MessageFlag.ArgsInArray in ret.messageEnum or
-       MessageFlag.ContextInArray in ret.messageEnum:
+       MessageFlag.ContextInArray in ret.messageEnum or
+       MessageFlag.ExceptionInArray in ret.messageEnum:
       if callArray.len == 0:
         raise newException(ValueError, "Return array expected but none provided")
       result.header.rootId = 1    # ObjectId of the ArraySingleObject
