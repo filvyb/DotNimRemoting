@@ -204,27 +204,37 @@ proc methodReturnException*(exceptionValue: ValueWithCode): (BinaryMethodReturn,
 proc createMethodCallMessage*(methodName, typeName: string, 
                              argsInline: seq[PrimitiveValue] = @[]): RemotingMessage =
   ## Create a complete method call message with inline arguments
+  let ctx = newSerializationContext()
   let call = methodCallBasic(methodName, typeName, argsInline)
-  newRemotingMessage(methodCall = some(call))
+  newRemotingMessage(ctx, methodCall = some(call))
 
 proc createMethodReturnMessage*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): RemotingMessage =
   ## Create a complete method return message
+  let ctx = newSerializationContext()
   let ret = methodReturnBasic(returnValue)
-  newRemotingMessage(methodReturn = some(ret))
+  newRemotingMessage(ctx, methodReturn = some(ret))
 
 proc createMethodReturnVoidMessage*(): RemotingMessage =
   ## Create a complete method return message with void result
+  let ctx = newSerializationContext()
   let ret = methodReturnVoid()
-  newRemotingMessage(methodReturn = some(ret))
+  newRemotingMessage(ctx, methodReturn = some(ret))
 
 #
 # Serialization/Deserialization convenience functions
 #
 
 proc serializeRemotingMessage*(msg: RemotingMessage): seq[byte] =
-  ## Serialize a RemotingMessage to bytes
+  ## Serialize a RemotingMessage to bytes using a new SerializationContext
+  let ctx = newSerializationContext()
   var output = memoryOutput()
-  writeRemotingMessage(output, msg)
+  writeRemotingMessage(output, msg, ctx)
+  return output.getOutput(seq[byte])
+  
+proc serializeRemotingMessage*(msg: RemotingMessage, ctx: SerializationContext): seq[byte] =
+  ## Serialize a RemotingMessage to bytes using the provided SerializationContext
+  var output = memoryOutput()
+  writeRemotingMessage(output, msg, ctx)
   return output.getOutput(seq[byte])
 
 proc deserializeRemotingMessage*(data: openArray[byte]): RemotingMessage =
@@ -233,22 +243,104 @@ proc deserializeRemotingMessage*(data: openArray[byte]): RemotingMessage =
   return readRemotingMessage(input)
 
 #
+# Testing and Example functions
+#
+
+proc testSerializationContext*(): seq[byte] =
+  ## Tests the serialization context implementation
+  let ctx = newSerializationContext()
+  
+  # Create a simple method call
+  let call = methodCallBasic("testMethod", "TestType", @[stringValue("arg1")])
+  
+  # Create some referenceable records using context
+  let stringRecord = BinaryObjectString(
+    recordType: rtBinaryObjectString,
+    value: LengthPrefixedString(value: "test string")
+  )
+  let strRecRef = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: stringRecord)
+  discard ctx.assignId(strRecRef)
+  
+  let arrayRecord = ArraySingleObject(
+    recordType: rtArraySingleObject,
+    arrayInfo: ArrayInfo(length: 3)
+  )
+  let arrayRecRef = ReferenceableRecord(
+    kind: rtArraySingleObject, 
+    arrayRecord: ArrayRecord(kind: rtArraySingleObject, arraySingleObject: arrayRecord)
+  )
+  discard ctx.assignId(arrayRecRef)
+  
+  # Create a remoting message with the records
+  let msg = newRemotingMessage(
+    ctx, 
+    methodCall = some(call), 
+    callArray = @[toValueWithCode(stringValue("arg2"))],
+    refs = @[strRecRef, arrayRecRef]
+  )
+  
+  # Serialize and return the bytes
+  var output = memoryOutput()
+  writeRemotingMessage(output, msg, ctx)
+  return output.getOutput(seq[byte])
+
+#
 # Class construction helpers
 #
 
-proc classInfo*(idGen: IdGenerator, name: string, memberNames: seq[string]): ClassInfo =
-  ## Create a ClassInfo structure
+proc classInfo*(name: string, memberNames: seq[string]): ClassInfo =
+  ## Create a ClassInfo structure without setting objectId
+  ## The objectId will be set when the containing class record is processed by SerializationContext
   ClassInfo(
-    objectId: idGen.getNextId(),
     name: LengthPrefixedString(value: name),
     memberCount: memberNames.len.int32,
     memberNames: memberNames.mapIt(LengthPrefixedString(value: it))
   )
 
-proc classWithMembersAndTypes*(idGen: IdGenerator, className: string, 
-                                    libraryName: string,
+proc classInfo*(idGen: IdGenerator, name: string, memberNames: seq[string]): ClassInfo =
+  ## Create a ClassInfo structure using IdGenerator
+  result = classInfo(name, memberNames)
+  result.objectId = idGen.getNextId()
+
+proc classWithMembersAndTypes*(ctx: SerializationContext, className: string, 
+                                    libraryId: int32,
                                     members: seq[(string, BinaryType, AdditionalTypeInfo)]): ClassWithMembersAndTypes =
-  ## Create a ClassWithMembersAndTypes record
+  ## Create a ClassWithMembersAndTypes record using context for ID assignment
+  
+  # Create member names list and type info
+  var memberNames: seq[string]
+  var binaryTypes: seq[BinaryType]
+  var additionalInfos: seq[AdditionalTypeInfo]
+  
+  for (name, btype, addInfo) in members:
+    memberNames.add(name)
+    binaryTypes.add(btype)
+    additionalInfos.add(addInfo)
+  
+  result = ClassWithMembersAndTypes(
+    recordType: rtClassWithMembersAndTypes,
+    classInfo: classInfo(name = className, memberNames = memberNames),
+    memberTypeInfo: MemberTypeInfo(
+      binaryTypes: binaryTypes,
+      additionalInfos: additionalInfos
+    ),
+    libraryId: libraryId
+  )
+  
+  # Create and register with context to assign IDs
+  let refRecord = ReferenceableRecord(
+    kind: rtClassWithMembersAndTypes,
+    classRecord: ClassRecord(
+      kind: rtClassWithMembersAndTypes,
+      classWithMembersAndTypes: result
+    )
+  )
+  discard ctx.assignId(refRecord) # Sets classInfo.objectId
+
+proc classWithMembersAndTypes*(idGen: IdGenerator, className: string, 
+                                libraryName: string,
+                                members: seq[(string, BinaryType, AdditionalTypeInfo)]): ClassWithMembersAndTypes =
+  ## Create a ClassWithMembersAndTypes record using IdGenerator
   
   # Create member names list and type info
   var memberNames: seq[string]
@@ -276,8 +368,26 @@ proc classWithMembersAndTypes*(idGen: IdGenerator, className: string,
 # Array construction helpers
 #
 
+proc arraySingleObject*(ctx: SerializationContext, length: int): ArraySingleObject =
+  ## Create a single-dimensional object array, using context for ID assignment
+  result = ArraySingleObject(
+    recordType: rtArraySingleObject,
+    arrayInfo: ArrayInfo(
+      length: length.int32
+    )
+  )
+  
+  let refRecord = ReferenceableRecord(
+    kind: rtArraySingleObject, 
+    arrayRecord: ArrayRecord(
+      kind: rtArraySingleObject, 
+      arraySingleObject: result
+    )
+  )
+  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+
 proc arraySingleObject*(idGen: IdGenerator, length: int): ArraySingleObject =
-  ## Create a single-dimensional object array
+  ## Create a single-dimensional object array using IdGenerator
   ArraySingleObject(
     recordType: rtArraySingleObject,
     arrayInfo: ArrayInfo(
@@ -286,9 +396,32 @@ proc arraySingleObject*(idGen: IdGenerator, length: int): ArraySingleObject =
     )
   )
 
-proc arraySinglePrimitive*(idGen: IdGenerator, length: int, 
+proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
                                primitiveType: PrimitiveType): ArraySinglePrimitive =
-  ## Create a single-dimensional primitive array
+  ## Create a single-dimensional primitive array using context for ID assignment
+  if primitiveType in {ptNull, ptString}:
+    raise newException(ValueError, "Invalid primitive array type: " & $primitiveType)
+    
+  result = ArraySinglePrimitive(
+    recordType: rtArraySinglePrimitive,
+    arrayInfo: ArrayInfo(
+      length: length.int32
+    ),
+    primitiveType: primitiveType
+  )
+  
+  let refRecord = ReferenceableRecord(
+    kind: rtArraySinglePrimitive, 
+    arrayRecord: ArrayRecord(
+      kind: rtArraySinglePrimitive, 
+      arraySinglePrimitive: result
+    )
+  )
+  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+
+proc arraySinglePrimitive*(idGen: IdGenerator, length: int, 
+                           primitiveType: PrimitiveType): ArraySinglePrimitive =
+  ## Create a single-dimensional primitive array using IdGenerator
   if primitiveType in {ptNull, ptString}:
     raise newException(ValueError, "Invalid primitive array type: " & $primitiveType)
     
@@ -301,8 +434,26 @@ proc arraySinglePrimitive*(idGen: IdGenerator, length: int,
     primitiveType: primitiveType
   )
 
+proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleString =
+  ## Create a single-dimensional string array using context for ID assignment
+  result = ArraySingleString(
+    recordType: rtArraySingleString,
+    arrayInfo: ArrayInfo(
+      length: length.int32
+    )
+  )
+  
+  let refRecord = ReferenceableRecord(
+    kind: rtArraySingleString, 
+    arrayRecord: ArrayRecord(
+      kind: rtArraySingleString, 
+      arraySingleString: result
+    )
+  )
+  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+
 proc arraySingleString*(idGen: IdGenerator, length: int): ArraySingleString =
-  ## Create a single-dimensional string array
+  ## Create a single-dimensional string array using IdGenerator
   ArraySingleString(
     recordType: rtArraySingleString,
     arrayInfo: ArrayInfo(
@@ -315,8 +466,21 @@ proc arraySingleString*(idGen: IdGenerator, length: int): ArraySingleString =
 # Object construction helpers
 #
 
+proc binaryObjectString*(ctx: SerializationContext, value: string): BinaryObjectString =
+  ## Create a BinaryObjectString record using context for ID assignment
+  result = BinaryObjectString(
+    recordType: rtBinaryObjectString,
+    value: LengthPrefixedString(value: value)
+  )
+  
+  let refRecord = ReferenceableRecord(
+    kind: rtBinaryObjectString,
+    stringRecord: result
+  )
+  discard ctx.assignId(refRecord) # Sets objectId
+
 proc binaryObjectString*(idGen: IdGenerator, value: string): BinaryObjectString =
-  ## Create a BinaryObjectString record
+  ## Create a BinaryObjectString record using IdGenerator
   BinaryObjectString(
     recordType: rtBinaryObjectString,
     objectId: idGen.getNextId(),

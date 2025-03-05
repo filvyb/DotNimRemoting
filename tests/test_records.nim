@@ -1,6 +1,10 @@
 import unittest
 import faststreams/[inputs, outputs]
-import msnrbf/[enums, types, records/class, records/serialization, records/arrays, records/member]
+import msnrbf/[enums, types, helpers, grammar, records/class, records/serialization, records/arrays, records/member]
+import options
+
+# Export these for use in tests
+export helpers, grammar
 
 suite "Class Records Tests":
   test "Basic ClassInfo serialization/deserialization":
@@ -863,3 +867,69 @@ suite "Member Reference Records Tests":
       of ptDouble: check decoded.value.doubleVal == testValue.doubleVal
       of ptTimeSpan: check decoded.value.timeSpanVal == testValue.timeSpanVal
       else: discard
+
+suite "SerializationContext Tests":
+  test "SerializationContext assigns unique IDs":
+    let ctx = newSerializationContext()
+    
+    # Create two different records as BinaryObjectString
+    let str1 = BinaryObjectString(
+      recordType: rtBinaryObjectString,
+      value: LengthPrefixedString(value: "String 1")
+    )
+    let record1 = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: str1)
+    let id1 = ctx.assignId(record1)
+    
+    let str2 = BinaryObjectString(
+      recordType: rtBinaryObjectString,
+      value: LengthPrefixedString(value: "String 2")
+    )
+    let record2 = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: str2)
+    let id2 = ctx.assignId(record2)
+    
+    check:
+      id1 != id2
+      id1 > 0
+      id2 > 0
+  
+  test "SerializationContext ensures consistent IDs for same record":
+    let ctx = newSerializationContext()
+    
+    # Create a record and wrap it
+    let array = ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(length: 3)
+    )
+    let arrayRecord = ArrayRecord(
+      kind: rtArraySingleObject, 
+      arraySingleObject: array
+    )
+    let record = ReferenceableRecord(
+      kind: rtArraySingleObject, 
+      arrayRecord: arrayRecord
+    )
+    
+    # First assign ID
+    let id1 = ctx.assignId(record)
+    
+    # Request ID again - should return the same ID
+    let id2 = ctx.assignId(record)
+    
+    check:
+      id1 == id2
+      id1 > 0
+  
+  test "Message serialization with context works":
+    let ctx = newSerializationContext()
+    
+    # Create a message
+    let call = methodCallBasic("TestMethod", "TestClass")
+    let msg = newRemotingMessage(ctx, methodCall = some(call))
+    
+    # Serializing should not raise exceptions
+    let bytes = serializeRemotingMessage(msg, ctx)
+    check bytes.len > 0
+    
+    # Try to deserialize (should succeed)
+    let result = deserializeRemotingMessage(bytes)
+    check result.methodCall.isSome

@@ -20,14 +20,15 @@ suite "RemotingMessage serialization and deserialization":
       typeName: typeName
     )
 
-    # Create RemotingMessage
-    var msg = newRemotingMessage(methodCall = some(binaryMethodCall))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
     # Adjust header fields per spec: no callArray means rootId and headerId are 0
     msg.header.rootId = 0
     msg.header.headerId = 0
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence based on MS-NRBF spec
     let expected: seq[byte] = @[
@@ -95,11 +96,12 @@ suite "RemotingMessage serialization and deserialization":
       args: @[arg1, arg2]
     )
 
-    # Create RemotingMessage (assuming enhanced newRemotingMessage sets rootId=0, headerId=0 when no callArray)
-    var msg = newRemotingMessage(methodCall = some(binaryMethodCall))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -153,11 +155,12 @@ suite "RemotingMessage serialization and deserialization":
     # Create callArray with one argument: integer 10
     let value = ValueWithCode(primitiveType: ptInt32, value: int32Value(10))
 
-    # Create RemotingMessage (assuming enhanced newRemotingMessage sets rootId=1, headerId=-1 when callArray is present)
-    var msg = newRemotingMessage(methodCall = some(binaryMethodCall), callArray = @[value])
+    # Create a context and RemotingMessage
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[value])
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -204,11 +207,12 @@ suite "RemotingMessage serialization and deserialization":
       returnValue: returnValue
     )
 
-    # Create RemotingMessage (assuming enhanced newRemotingMessage sets rootId=0, headerId=0 when no callArray)
-    var msg = newRemotingMessage(methodReturn = some(binaryMethodReturn))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn))
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -247,11 +251,12 @@ suite "RemotingMessage serialization and deserialization":
     # Create callArray with one return value: integer 42
     let value = ValueWithCode(primitiveType: ptInt32, value: int32Value(42))
 
-    # Create RemotingMessage (assuming enhanced newRemotingMessage sets rootId=1, headerId=-1 when callArray is present)
-    var msg = newRemotingMessage(methodReturn = some(binaryMethodReturn), callArray = @[value])
+    # Create a context and RemotingMessage 
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn), callArray = @[value])
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -298,11 +303,12 @@ suite "RemotingMessage serialization and deserialization":
       typeName: typeName
     )
 
-    # Create RemotingMessage
-    var msg = newRemotingMessage(methodCall = some(binaryMethodCall))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -338,11 +344,12 @@ suite "RemotingMessage serialization and deserialization":
       messageEnum: {NoArgs, NoContext, ReturnValueVoid},  # 1 + 16 + 1024 = 1041
     )
 
-    # Create RemotingMessage
-    var msg = newRemotingMessage(methodReturn = some(binaryMethodReturn))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn))
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -382,11 +389,12 @@ suite "RemotingMessage serialization and deserialization":
       callContext: callContext
     )
 
-    # Create RemotingMessage
-    var msg = newRemotingMessage(methodCall = some(binaryMethodCall))
+    # Create RemotingMessage with context
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Define expected byte sequence
     let expected: seq[byte] = @[
@@ -428,13 +436,15 @@ suite "RemotingMessage serialization and deserialization":
     )
 
     # Create the message with the exception in the call array
+    let ctx = newSerializationContext()
     var msg = newRemotingMessage(
+      ctx,
       methodReturn = some(binaryMethodReturn),
       callArray = @[exceptionValue]
     )
 
     # Serialize the message
-    let serialized = serializeRemotingMessage(msg)
+    let serialized = serializeRemotingMessage(msg, ctx)
 
     # Expected serialized bytes (example, adjust as per your implementation)
     let expected: seq[byte] = @[
