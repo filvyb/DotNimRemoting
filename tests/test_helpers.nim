@@ -1,26 +1,10 @@
 import unittest
-import faststreams/[inputs, outputs]
-import options, tables, strutils
+import faststreams/inputs
+import options
 import msnrbf/[enums, types, helpers, grammar]
 import msnrbf/records/[arrays, class, member, methodinv, serialization]
 
 suite "MSNRBF Helpers":
-  test "IdGenerator":
-    let gen = newIdGenerator()
-    
-    # Test getNextId increments properly
-    check(gen.getNextId() == 1)
-    check(gen.getNextId() == 2)
-    check(gen.getNextId() == 3)
-    
-    # Test getLibraryId creates and reuses IDs
-    let id1 = gen.getLibraryId("testLib1")
-    let id2 = gen.getLibraryId("testLib2")
-    let id3 = gen.getLibraryId("testLib1") # Should return same ID as id1
-    
-    check(id1 == 4)
-    check(id2 == 5)
-    check(id3 == id1)
   
   test "PrimitiveValue creation":
     # Test various primitive value creators
@@ -178,7 +162,7 @@ suite "MSNRBF Helpers":
     check(deserializedCall.args[1].value.doubleVal == 3.14)
 
   test "Class construction helpers":
-    let gen = newIdGenerator()
+    let ctx = newSerializationContext()
     
     # Create member info
     let memberInfos = @[
@@ -188,11 +172,9 @@ suite "MSNRBF Helpers":
       ("Zip", btString, AdditionalTypeInfo(kind: btString))
     ]
     
-    let cls = classWithMembersAndTypes(gen, "TestNamespace.Address", 
-                                       "TestLibrary", memberInfos)
+    let cls = classWithMembersAndTypes(ctx, "TestNamespace.Address", 1, memberInfos)
     
     check(cls.recordType == rtClassWithMembersAndTypes)
-    check(cls.classInfo.name.value == "TestNamespace.Address")
     check(cls.classInfo.memberCount == 4)
     check(cls.classInfo.memberNames[0].value == "Street")
     check(cls.classInfo.memberNames[1].value == "City")
@@ -201,57 +183,39 @@ suite "MSNRBF Helpers":
     
     check(cls.memberTypeInfo.binaryTypes.len == 4)
     check(cls.memberTypeInfo.binaryTypes[0] == btString)
-    
-    # Check library ID assignment
-    check(cls.libraryId == 1) # First library ID
+    check(cls.classInfo.name.value == "TestNamespace.Address")
 
   test "Array construction helpers":
-    let gen = newIdGenerator()
+    let ctx = newSerializationContext()
     
     # Test single object array
-    let objArray = arraySingleObject(gen, 5)
+    let objArray = arraySingleObject(ctx, 5)
     check(objArray.recordType == rtArraySingleObject)
     check(objArray.arrayInfo.length == 5)
-    check(objArray.arrayInfo.objectId == 1)
     
     # Test single primitive array
-    let primArray = arraySinglePrimitive(gen, 10, ptInt32)
+    let primArray = arraySinglePrimitive(ctx, 10, ptInt32)
     check(primArray.recordType == rtArraySinglePrimitive)
     check(primArray.arrayInfo.length == 10)
-    check(primArray.arrayInfo.objectId == 2)
     check(primArray.primitiveType == ptInt32)
     
     # Test single string array
-    let strArray = arraySingleString(gen, 3)
+    let strArray = arraySingleString(ctx, 3)
     check(strArray.recordType == rtArraySingleString)
     check(strArray.arrayInfo.length == 3)
-    check(strArray.arrayInfo.objectId == 3)
     
     # Should throw when creating primitive array with invalid type
     expect ValueError:
-      discard arraySinglePrimitive(gen, 5, ptString)
+      discard arraySinglePrimitive(ctx, 5, ptString)
     
     expect ValueError:
-      discard arraySinglePrimitive(gen, 5, ptNull)
+      discard arraySinglePrimitive(ctx, 5, ptNull)
 
   test "Object construction helpers":
-    let gen = newIdGenerator()
+    let ctx = newSerializationContext()
     
     # Test BinaryObjectString
-    let str = binaryObjectString(gen, "Test string")
+    let str = binaryObjectString(ctx, "Test string")
     check(str.recordType == rtBinaryObjectString)
-    check(str.objectId == 1)
     check(str.value.value == "Test string")
-    
-    # Test BinaryLibrary
-    let lib = binaryLibrary(gen, "Test.Library")
-    check(lib.recordType == rtBinaryLibrary)
-    check(lib.libraryId > 0)
-    check(lib.libraryName.value == "Test.Library")
-    
-    # Check library ID reuse
-    let lib2 = binaryLibrary(gen, "Test.Library")
-    let lib3 = binaryLibrary(gen, "Another.Library")
-    check(lib2.libraryId == lib.libraryId) # Same name should get same ID
-    check(lib3.libraryId != lib.libraryId) # Different name should get different ID
 

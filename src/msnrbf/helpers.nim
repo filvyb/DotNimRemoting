@@ -1,35 +1,7 @@
 import faststreams/[inputs, outputs]
-import options, tables, unicode, sequtils
+import options, unicode, sequtils
 import enums, types, grammar
-import records/[arrays, class, member, methodinv, serialization]
-
-type
-  IdGenerator* = ref object
-    ## Helper to manage object IDs for serialization
-    nextId*: int32
-    libraries*: Table[string, int32]  # Maps library names to IDs
-    objects*: Table[int, int32]       # Maps object hash to IDs
-
-proc newIdGenerator*(): IdGenerator =
-  ## Creates a new ID generator with initial state
-  IdGenerator(
-    nextId: 1,
-    libraries: initTable[string, int32](),
-    objects: initTable[int, int32]()
-  )
-
-proc getNextId*(gen: IdGenerator): int32 =
-  ## Get next available ID and increment counter
-  result = gen.nextId
-  inc gen.nextId
-
-proc getLibraryId*(gen: IdGenerator, name: string): int32 =
-  ## Get or create ID for library
-  if name in gen.libraries:
-    return gen.libraries[name]
-  
-  result = gen.getNextId()
-  gen.libraries[name] = result
+import records/[arrays, class, member, methodinv]
 
 #
 # PrimitiveValue creation helpers
@@ -297,10 +269,6 @@ proc classInfo*(name: string, memberNames: seq[string]): ClassInfo =
     memberNames: memberNames.mapIt(LengthPrefixedString(value: it))
   )
 
-proc classInfo*(idGen: IdGenerator, name: string, memberNames: seq[string]): ClassInfo =
-  ## Create a ClassInfo structure using IdGenerator
-  result = classInfo(name, memberNames)
-  result.objectId = idGen.getNextId()
 
 proc classWithMembersAndTypes*(ctx: SerializationContext, className: string, 
                                     libraryId: int32,
@@ -337,32 +305,6 @@ proc classWithMembersAndTypes*(ctx: SerializationContext, className: string,
   )
   discard ctx.assignId(refRecord) # Sets classInfo.objectId
 
-proc classWithMembersAndTypes*(idGen: IdGenerator, className: string, 
-                                libraryName: string,
-                                members: seq[(string, BinaryType, AdditionalTypeInfo)]): ClassWithMembersAndTypes =
-  ## Create a ClassWithMembersAndTypes record using IdGenerator
-  
-  # Create member names list and type info
-  var memberNames: seq[string]
-  var binaryTypes: seq[BinaryType]
-  var additionalInfos: seq[AdditionalTypeInfo]
-  
-  for (name, btype, addInfo) in members:
-    memberNames.add(name)
-    binaryTypes.add(btype)
-    additionalInfos.add(addInfo)
-    
-  let libraryId = idGen.getLibraryId(libraryName)
-  
-  result = ClassWithMembersAndTypes(
-    recordType: rtClassWithMembersAndTypes,
-    classInfo: classInfo(idGen, className, memberNames),
-    memberTypeInfo: MemberTypeInfo(
-      binaryTypes: binaryTypes,
-      additionalInfos: additionalInfos
-    ),
-    libraryId: libraryId
-  )
 
 #
 # Array construction helpers
@@ -386,15 +328,6 @@ proc arraySingleObject*(ctx: SerializationContext, length: int): ArraySingleObje
   )
   discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
 
-proc arraySingleObject*(idGen: IdGenerator, length: int): ArraySingleObject =
-  ## Create a single-dimensional object array using IdGenerator
-  ArraySingleObject(
-    recordType: rtArraySingleObject,
-    arrayInfo: ArrayInfo(
-      objectId: idGen.getNextId(),
-      length: length.int32
-    )
-  )
 
 proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
                                primitiveType: PrimitiveType): ArraySinglePrimitive =
@@ -419,20 +352,6 @@ proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
   )
   discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
 
-proc arraySinglePrimitive*(idGen: IdGenerator, length: int, 
-                           primitiveType: PrimitiveType): ArraySinglePrimitive =
-  ## Create a single-dimensional primitive array using IdGenerator
-  if primitiveType in {ptNull, ptString}:
-    raise newException(ValueError, "Invalid primitive array type: " & $primitiveType)
-    
-  ArraySinglePrimitive(
-    recordType: rtArraySinglePrimitive,
-    arrayInfo: ArrayInfo(
-      objectId: idGen.getNextId(),
-      length: length.int32
-    ),
-    primitiveType: primitiveType
-  )
 
 proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleString =
   ## Create a single-dimensional string array using context for ID assignment
@@ -452,15 +371,6 @@ proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleStri
   )
   discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
 
-proc arraySingleString*(idGen: IdGenerator, length: int): ArraySingleString =
-  ## Create a single-dimensional string array using IdGenerator
-  ArraySingleString(
-    recordType: rtArraySingleString,
-    arrayInfo: ArrayInfo(
-      objectId: idGen.getNextId(),
-      length: length.int32
-    )
-  )
 
 #
 # Object construction helpers
@@ -479,19 +389,4 @@ proc binaryObjectString*(ctx: SerializationContext, value: string): BinaryObject
   )
   discard ctx.assignId(refRecord) # Sets objectId
 
-proc binaryObjectString*(idGen: IdGenerator, value: string): BinaryObjectString =
-  ## Create a BinaryObjectString record using IdGenerator
-  BinaryObjectString(
-    recordType: rtBinaryObjectString,
-    objectId: idGen.getNextId(),
-    value: LengthPrefixedString(value: value)
-  )
 
-proc binaryLibrary*(idGen: IdGenerator, name: string): BinaryLibrary =
-  ## Create a BinaryLibrary record
-  let libId = idGen.getLibraryId(name)
-  BinaryLibrary(
-    recordType: rtBinaryLibrary,
-    libraryId: libId,
-    libraryName: LengthPrefixedString(value: name)
-  )

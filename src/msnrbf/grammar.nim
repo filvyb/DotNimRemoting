@@ -1,6 +1,5 @@
 import faststreams/[inputs, outputs]
 import enums
-import types
 import records/[arrays, class, member, methodinv, serialization]
 import tables
 import options
