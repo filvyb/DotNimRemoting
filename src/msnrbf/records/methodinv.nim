@@ -44,7 +44,7 @@ type
     of rvPrimitive:
       primitiveVal*: PrimitiveValue
     of rvString:
-      stringVal*: string
+      stringVal*: LengthPrefixedString
     of rvNull:
       discard
     of rvReference:
@@ -151,7 +151,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     result = RemotingValue(kind: rvPrimitive, primitiveVal: primTyped.value)
   of rtBinaryObjectString:
     let strRecord = readBinaryObjectString(inp)
-    result = RemotingValue(kind: rvString, stringVal: strRecord.value.value)
+    result = RemotingValue(kind: rvString, stringVal: strRecord.value)
   of rtObjectNull:
     discard readObjectNull(inp)
     result = RemotingValue(kind: rvNull)
@@ -282,7 +282,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
     let strRecord = BinaryObjectString(
       recordType: rtBinaryObjectString,
       objectId: 1, # Set a positive ID (will be overwritten by context if used with refs)
-      value: LengthPrefixedString(value: value.stringVal)
+      value: value.stringVal
     )
     writeBinaryObjectString(outp, strRecord)
   of rvNull:

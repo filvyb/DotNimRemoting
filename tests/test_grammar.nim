@@ -408,7 +408,7 @@ suite "RemotingMessage serialization and deserialization":
     # Define an exception value as a RemotingValue
     let exceptionValue = RemotingValue(
       kind: rvString,
-      stringVal: "DivideByZeroException"
+      stringVal: LengthPrefixedString(value: "DivideByZeroException")
     )
 
     # Create BinaryMethodReturn with valid flags: NoContext and ExceptionInArray
@@ -435,4 +435,4 @@ suite "RemotingMessage serialization and deserialization":
     check methodReturn.messageEnum == {NoContext, ExceptionInArray}
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
-    check deserialized.methodCallArray[0].stringVal == "DivideByZeroException"
+    check deserialized.methodCallArray[0].stringVal.value == "DivideByZeroException"

@@ -959,7 +959,7 @@ suite "SerializationContext Tests":
     # Test string value
     let strValue = RemotingValue(
       kind: rvString,
-      stringVal: "Hello, World!"
+      stringVal: LengthPrefixedString(value: "Hello, World!")
     )
 
     var outStream = memoryOutput()
@@ -970,7 +970,7 @@ suite "SerializationContext Tests":
     let decoded = readRemotingValue(inStream)
 
     check decoded.kind == rvString
-    check decoded.stringVal == "Hello, World!"
+    check decoded.stringVal.value == "Hello, World!"
 
   test "RemotingValue null serialization and deserialization":
     # Test null value
@@ -1066,7 +1066,7 @@ suite "SerializationContext Tests":
           ),
           RemotingValue(
             kind: rvString,
-            stringVal: "Test String"
+            stringVal: LengthPrefixedString(value:"Test String")
           ),
           RemotingValue(kind: rvNull)
         ]
@@ -1087,7 +1087,7 @@ suite "SerializationContext Tests":
     check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
     check decoded.arrayVal.elements[0].primitiveVal.int32Val == 42
     check decoded.arrayVal.elements[1].kind == rvString
-    check decoded.arrayVal.elements[1].stringVal == "Test String"
+    check decoded.arrayVal.elements[1].stringVal.value == "Test String"
     check decoded.arrayVal.elements[2].kind == rvNull
 
   test "RemotingValue handling of ObjectNullMultiple":
@@ -1177,7 +1177,7 @@ suite "SerializationContext Tests":
         elements: @[
           RemotingValue(
             kind: rvString,
-            stringVal: "Array Item 1"
+            stringVal: LengthPrefixedString(value:"Array Item 1")
           ),
           RemotingValue(
             kind: rvArray,
@@ -1232,7 +1232,7 @@ suite "SerializationContext Tests":
     check deserialized.methodCallArray[0].kind == rvArray
     check deserialized.methodCallArray[0].arrayVal.elements.len == 2
     check deserialized.methodCallArray[0].arrayVal.elements[0].kind == rvString
-    check deserialized.methodCallArray[0].arrayVal.elements[0].stringVal == "Array Item 1"
+    check deserialized.methodCallArray[0].arrayVal.elements[0].stringVal.value == "Array Item 1"
     
     # Check the nested array
     check deserialized.methodCallArray[0].arrayVal.elements[1].kind == rvArray
@@ -1268,7 +1268,7 @@ suite "SerializationContext Tests":
           ),
           RemotingValue(
             kind: rvString,
-            stringVal: "Member String Value"
+            stringVal: LengthPrefixedString(value: "Member String Value")
           )
         ]
       )
@@ -1295,4 +1295,4 @@ suite "SerializationContext Tests":
     check decoded.classVal.members[0].primitiveVal.int32Val == 42
     
     check decoded.classVal.members[1].kind == rvString
-    check decoded.classVal.members[1].stringVal == "Member String Value"
+    check decoded.classVal.members[1].stringVal.value == "Member String Value"
