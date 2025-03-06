@@ -496,22 +496,6 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   # Write tail
   writeMessageEnd(outp, msg.tail)
 
-# Keep backward compatibility
-proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[ValueWithCode] = @[]) =
-  ## Backward compatibility wrapper
-  let ctx = newSerializationContext()
-  writeMethodCall(outp, call, array, ctx)
-
-proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[ValueWithCode] = @[]) =
-  ## Backward compatibility wrapper
-  let ctx = newSerializationContext()
-  writeMethodReturn(outp, ret, array, ctx)
-
-proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage) =
-  ## Backward compatibility wrapper
-  let ctx = newSerializationContext()
-  writeRemotingMessage(outp, msg, ctx)
-
 proc newRemotingMessage*(ctx: SerializationContext,
                         methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
@@ -568,11 +552,3 @@ proc newRemotingMessage*(ctx: SerializationContext,
       result.header.rootId = 0
       result.header.headerId = 0
 
-# Backward compatibility constructor
-proc newRemotingMessage*(methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
-                        methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
-                        callArray: seq[ValueWithCode] = @[],
-                        refs: seq[ReferenceableRecord] = @[]): RemotingMessage =
-  ## Backward compatibility constructor that creates its own SerializationContext
-  let ctx = newSerializationContext()
-  newRemotingMessage(ctx, methodCall, methodReturn, callArray, refs)

@@ -173,8 +173,7 @@ proc methodReturnException*(exceptionValue: ValueWithCode): (BinaryMethodReturn,
 # Complete message creation helpers 
 #
 
-proc createMethodCallMessage*(methodName, typeName: string, 
-                             argsInline: seq[PrimitiveValue] = @[]): RemotingMessage =
+proc createMethodCallMessage*(methodName, typeName: string, argsInline: seq[PrimitiveValue] = @[]): RemotingMessage =
   ## Create a complete method call message with inline arguments
   let ctx = newSerializationContext()
   let call = methodCallBasic(methodName, typeName, argsInline)
@@ -214,47 +213,6 @@ proc deserializeRemotingMessage*(data: openArray[byte]): RemotingMessage =
   var input = memoryInput(data)
   return readRemotingMessage(input)
 
-#
-# Testing and Example functions
-#
-
-proc testSerializationContext*(): seq[byte] =
-  ## Tests the serialization context implementation
-  let ctx = newSerializationContext()
-  
-  # Create a simple method call
-  let call = methodCallBasic("testMethod", "TestType", @[stringValue("arg1")])
-  
-  # Create some referenceable records using context
-  let stringRecord = BinaryObjectString(
-    recordType: rtBinaryObjectString,
-    value: LengthPrefixedString(value: "test string")
-  )
-  let strRecRef = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: stringRecord)
-  discard ctx.assignId(strRecRef)
-  
-  let arrayRecord = ArraySingleObject(
-    recordType: rtArraySingleObject,
-    arrayInfo: ArrayInfo(length: 3)
-  )
-  let arrayRecRef = ReferenceableRecord(
-    kind: rtArraySingleObject, 
-    arrayRecord: ArrayRecord(kind: rtArraySingleObject, arraySingleObject: arrayRecord)
-  )
-  discard ctx.assignId(arrayRecRef)
-  
-  # Create a remoting message with the records
-  let msg = newRemotingMessage(
-    ctx, 
-    methodCall = some(call), 
-    callArray = @[toValueWithCode(stringValue("arg2"))],
-    refs = @[strRecRef, arrayRecRef]
-  )
-  
-  # Serialize and return the bytes
-  var output = memoryOutput()
-  writeRemotingMessage(output, msg, ctx)
-  return output.getOutput(seq[byte])
 
 #
 # Class construction helpers
