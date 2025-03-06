@@ -2,6 +2,8 @@ import faststreams/[inputs, outputs]
 import ../enums
 import ../types
 import member
+import class
+import arrays
 
 type
   ValueWithCode* = object
@@ -36,6 +38,36 @@ type
     returnValue*: ValueWithCode  # Optional Return Value 
     callContext*: StringValueWithCode  # Optional Logical Call ID
     args*: ArrayOfValueWithCode  # Optional output arguments
+
+  RemotingValue* = object
+    case kind*: RemotingValueKind
+    of rvPrimitive:
+      primitiveVal*: PrimitiveValue
+    of rvString:
+      stringVal*: string
+    of rvNull:
+      discard
+    of rvReference:
+      idRef*: int32
+    of rvClass:
+      classVal*: ClassValue
+    of rvArray:
+      arrayVal*: ArrayValue
+
+  ClassValue* = object
+    classInfo*: ClassInfo        # From records/class.nim
+    members*: seq[RemotingValue] # Member values
+    libraryId*: int32            # Library reference, if applicable
+
+  ArrayValue* = object
+    arrayInfo*: ArrayInfo        # From records/arrays.nim
+    elements*: seq[RemotingValue] # Array elements
+
+
+proc peekRecordType*(inp: InputStream): RecordType =
+  ## Peeks the next record type without consuming it
+  if inp.readable:
+    result = RecordType(inp.peek)
 
 proc newStringValueWithCode*(value: string): StringValueWithCode =
   ## Creates new StringValueWithCode structure
@@ -110,6 +142,73 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
   if MessageFlag.ArgsInline in result.messageEnum:
     result.args = readArrayOfValueWithCode(inp)
 
+proc readRemotingValue*(inp: InputStream): RemotingValue =
+  ## Reads any serializable object from the input stream into a RemotingValue
+  let recordType = peekRecordType(inp)
+  case recordType
+  of rtMemberPrimitiveTyped:
+    let primTyped = readMemberPrimitiveTyped(inp)
+    result = RemotingValue(kind: rvPrimitive, primitiveVal: primTyped.value)
+  of rtBinaryObjectString:
+    let strRecord = readBinaryObjectString(inp)
+    result = RemotingValue(kind: rvString, stringVal: strRecord.value.value)
+  of rtObjectNull:
+    discard readObjectNull(inp)
+    result = RemotingValue(kind: rvNull)
+  of rtObjectNullMultiple:
+    # Handle multiple nulls in a single record
+    # Note: This should only be handled at array element reading level
+    let nullRecord = readObjectNullMultiple(inp)
+    # Just return a single null - the array reading logic will handle repetition
+    result = RemotingValue(kind: rvNull)
+  of rtObjectNullMultiple256:
+    # Handle multiple nulls in a single record (compact form)
+    # Note: This should only be handled at array element reading level
+    let nullRecord = readObjectNullMultiple256(inp)
+    # Just return a single null - the array reading logic will handle repetition
+    result = RemotingValue(kind: rvNull)
+  of rtMemberReference:
+    let refRecord = readMemberReference(inp)
+    result = RemotingValue(kind: rvReference, idRef: refRecord.idRef)
+  of rtClassWithId..rtClassWithMembersAndTypes:
+    # Simplified: assumes ClassWithMembersAndTypes; adjust for other types if needed
+    let classRecord = readClassWithMembersAndTypes(inp)
+    result = RemotingValue(kind: rvClass, classVal: ClassValue(
+      classInfo: classRecord.classInfo,
+      members: @[],
+      libraryId: classRecord.libraryId
+    ))
+    for i in 0..<classRecord.classInfo.memberCount:
+      result.classVal.members.add(readRemotingValue(inp))
+  of rtArraySingleObject:
+    let arrayRecord = readArraySingleObject(inp)
+    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      arrayInfo: arrayRecord.arrayInfo,
+      elements: @[]
+    ))
+    
+    var count = 0
+    while count < arrayRecord.arrayInfo.length:
+      let nextType = peekRecordType(inp)
+      if nextType == rtObjectNullMultiple:
+        let nullRecord = readObjectNullMultiple(inp)
+        for i in 0..<nullRecord.nullCount:
+          result.arrayVal.elements.add(RemotingValue(kind: rvNull))
+          count += 1
+          if count >= arrayRecord.arrayInfo.length:
+            break
+      elif nextType == rtObjectNullMultiple256:
+        let nullRecord = readObjectNullMultiple256(inp)
+        for i in 0..<nullRecord.nullCount.int32:
+          result.arrayVal.elements.add(RemotingValue(kind: rvNull))
+          count += 1
+          if count >= arrayRecord.arrayInfo.length:
+            break
+      else:
+        result.arrayVal.elements.add(readRemotingValue(inp))
+        count += 1
+  else:
+    raise newException(IOError, "Unsupported record type for RemotingValue: " & $recordType)
 
 # Writing procedures
 proc writeValueWithCode*(outp: OutputStream, value: ValueWithCode) =
@@ -170,3 +269,77 @@ proc writeBinaryMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn) =
     
   if MessageFlag.ArgsInline in ret.messageEnum:
     writeArrayOfValueWithCode(outp, ret.args)
+
+proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
+  ## Writes a RemotingValue to the output stream
+  case value.kind
+  of rvPrimitive:
+    writeMemberPrimitiveTyped(outp, MemberPrimitiveTyped(
+      recordType: rtMemberPrimitiveTyped,
+      value: value.primitiveVal
+    ))
+  of rvString:
+    let strRecord = BinaryObjectString(
+      recordType: rtBinaryObjectString,
+      objectId: 1, # Set a positive ID (will be overwritten by context if used with refs)
+      value: LengthPrefixedString(value: value.stringVal)
+    )
+    writeBinaryObjectString(outp, strRecord)
+  of rvNull:
+    writeObjectNull(outp, ObjectNull(recordType: rtObjectNull))
+  of rvReference:
+    writeMemberReference(outp, MemberReference(
+      recordType: rtMemberReference,
+      idRef: value.idRef
+    ))
+  of rvClass:
+    # First gather the member type information
+    var binaryTypes: seq[BinaryType] = @[]
+    var additionalInfos: seq[AdditionalTypeInfo] = @[]
+    
+    # Create type info for each member based on RemotingValue kind
+    for member in value.classVal.members:
+      case member.kind
+      of rvPrimitive:
+        binaryTypes.add(btPrimitive)
+        additionalInfos.add(AdditionalTypeInfo(
+          kind: btPrimitive, 
+          primitiveType: member.primitiveVal.kind
+        ))
+      of rvString:
+        binaryTypes.add(btString)
+        additionalInfos.add(AdditionalTypeInfo(kind: btString))
+      of rvNull:
+        binaryTypes.add(btObject)
+        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+      of rvReference:
+        binaryTypes.add(btObject)
+        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+      of rvClass, rvArray:
+        binaryTypes.add(btObject)
+        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+    
+    let memberTypeInfo = MemberTypeInfo(
+      binaryTypes: binaryTypes,
+      additionalInfos: additionalInfos
+    )
+    
+    let classRecord = ClassWithMembersAndTypes(
+      recordType: rtClassWithMembersAndTypes,
+      classInfo: value.classVal.classInfo,
+      memberTypeInfo: memberTypeInfo,
+      libraryId: value.classVal.libraryId
+    )
+    writeClassWithMembersAndTypes(outp, classRecord)
+    
+    # Write the member values
+    for member in value.classVal.members:
+      writeRemotingValue(outp, member)
+  of rvArray:
+    let arrayRecord = ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: value.arrayVal.arrayInfo
+    )
+    writeArraySingleObject(outp, arrayRecord)
+    for elem in value.arrayVal.elements:
+      writeRemotingValue(outp, elem)

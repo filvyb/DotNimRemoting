@@ -18,7 +18,7 @@ type
     referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
     methodCall*: Option[BinaryMethodCall]        # Required method call
     methodReturn*: Option[BinaryMethodReturn]    # Or method return
-    methodCallArray*: seq[ValueWithCode]   # Optional method call array
+    methodCallArray*: seq[RemotingValue]   # Optional method call array
     tail*: MessageEnd                      # Required message end marker
 
   ReferenceableRecord* = ref object
@@ -220,7 +220,7 @@ proc readReferenceable*(inp: InputStream, ctx: ReferenceContext): ReferenceableR
   else:
     raise newException(IOError, "Invalid referenceable record type: " & $recordType)
 
-proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: BinaryMethodCall, array: seq[ValueWithCode]] =
+proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: BinaryMethodCall, array: seq[RemotingValue]] =
   ## Reads a method call + optional array
   ## Section 2.7: methodCall = 0*1(BinaryLibrary) BinaryMethodCall 0*1(callArray)
 
@@ -255,11 +255,11 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
 
     # Read the array object
     let arrayObj = readArraySingleObject(inp)
-    # Read array values
+    # Read array values as RemotingValue objects
     for i in 0..<arrayObj.arrayInfo.length:
-      result.array.add(readValueWithCode(inp))
+      result.array.add(readRemotingValue(inp))
 
-proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[ValueWithCode]] =
+proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[RemotingValue]] =
   ## Reads a method return + optional array
   ## Section 2.7: methodReturn = 0*1(BinaryLibrary) BinaryMethodReturn 0*1(callArray)
   
@@ -296,9 +296,9 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
 
     # Read the array object
     let arrayObj = readArraySingleObject(inp)
-    # Read array values
+    # Read array values as RemotingValue objects
     for i in 0..<arrayObj.arrayInfo.length:
-      result.array.add(readValueWithCode(inp))
+      result.array.add(readRemotingValue(inp))
 
 proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   ## Reads a complete remoting message following MS-NRBF grammar
@@ -401,7 +401,7 @@ proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord) =
   else:
     raise newException(ValueError, "Invalid referenceable record type: " & $record.kind)
 
-proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[ValueWithCode], ctx: SerializationContext) =
+proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a method call + optional array, assigning IDs via context
   writeBinaryMethodCall(outp, call)
 
@@ -423,11 +423,11 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Val
     discard ctx.assignId(refRecord)  # Assigns and sets arrayInfo.objectId
     writeReferenceable(outp, refRecord)
     
-    # Write array values (assumed to be primitives for now)
+    # Write array values using RemotingValue
     for value in array:
-      writeValueWithCode(outp, value)
+      writeRemotingValue(outp, value)
 
-proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[ValueWithCode], ctx: SerializationContext) =
+proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a method return + optional array, assigning IDs via context
   writeBinaryMethodReturn(outp, ret)
 
@@ -451,9 +451,9 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
     discard ctx.assignId(refRecord)  # Assigns and sets arrayInfo.objectId
     writeReferenceable(outp, refRecord)
     
-    # Write array values (assumed to be primitives for now)
+    # Write array values using RemotingValue
     for value in array:
-      writeValueWithCode(outp, value)
+      writeRemotingValue(outp, value)
 
 proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: SerializationContext) =
   ## Writes complete remoting message, using context for ID management
@@ -499,7 +499,7 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
 proc newRemotingMessage*(ctx: SerializationContext,
                         methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
-                        callArray: seq[ValueWithCode] = @[],
+                        callArray: seq[RemotingValue] = @[],
                         refs: seq[ReferenceableRecord] = @[]): RemotingMessage =
   ## Creates a new RemotingMessage, assigning IDs to referencedRecords using the context
   # Validate that exactly one of methodCall or methodReturn is provided
@@ -551,4 +551,3 @@ proc newRemotingMessage*(ctx: SerializationContext,
     else:
       result.header.rootId = 0
       result.header.headerId = 0
-

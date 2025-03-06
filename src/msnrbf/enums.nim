@@ -105,6 +105,14 @@ type
     Reserved29            # Reserved
     Reserved30            # Reserved
     Reserved31            # Reserved
+  
+  RemotingValueKind* = enum
+    rvPrimitive,    # Primitive types (e.g., int, bool)
+    rvString,       # String values
+    rvNull,         # Null objects
+    rvReference,    # Reference to another object
+    rvClass,        # Class instance
+    rvArray         # Array instance
 
   MessageFlags* = set[MessageFlag]
     ## Combination of MessageFlag bits

@@ -1,6 +1,6 @@
 import unittest
 import faststreams/[inputs, outputs]
-import msnrbf/[enums, types, helpers, grammar, records/class, records/serialization, records/arrays, records/member]
+import msnrbf/[enums, types, helpers, grammar, records/class, records/serialization, records/arrays, records/member, records/methodinv]
 import options
 
 # Export these for use in tests
@@ -933,3 +933,366 @@ suite "SerializationContext Tests":
     # Try to deserialize (should succeed)
     let result = deserializeRemotingMessage(bytes)
     check result.methodCall.isSome
+  
+  test "RemotingValue basic serialization and deserialization":
+    # Test primitive value
+    let primValue = RemotingValue(
+      kind: rvPrimitive,
+      primitiveVal: PrimitiveValue(
+        kind: ptInt32,
+        int32Val: 42
+      )
+    )
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, primValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvPrimitive
+    check decoded.primitiveVal.kind == ptInt32
+    check decoded.primitiveVal.int32Val == 42
+
+  test "RemotingValue string serialization and deserialization":
+    # Test string value
+    let strValue = RemotingValue(
+      kind: rvString,
+      stringVal: "Hello, World!"
+    )
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, strValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvString
+    check decoded.stringVal == "Hello, World!"
+
+  test "RemotingValue null serialization and deserialization":
+    # Test null value
+    let nullValue = RemotingValue(kind: rvNull)
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, nullValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvNull
+
+  test "RemotingValue reference serialization and deserialization":
+    # Test reference value
+    let refValue = RemotingValue(
+      kind: rvReference,
+      idRef: 123
+    )
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, refValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvReference
+    check decoded.idRef == 123
+
+  test "RemotingValue array serialization and deserialization":
+    # Test array with primitive elements
+    let arrayValue = RemotingValue(
+      kind: rvArray, 
+      arrayVal: ArrayValue(
+        arrayInfo: ArrayInfo(
+          objectId: 1,
+          length: 2
+        ),
+        elements: @[
+          RemotingValue(
+            kind: rvPrimitive,
+            primitiveVal: PrimitiveValue(
+              kind: ptInt32,
+              int32Val: 10
+            )
+          ),
+          RemotingValue(
+            kind: rvPrimitive,
+            primitiveVal: PrimitiveValue(
+              kind: ptInt32,
+              int32Val: 20
+            )
+          )
+        ]
+      )
+    )
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, arrayValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvArray
+    check decoded.arrayVal.arrayInfo.length == 2
+    check decoded.arrayVal.elements.len == 2
+    check decoded.arrayVal.elements[0].kind == rvPrimitive
+    check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
+    check decoded.arrayVal.elements[0].primitiveVal.int32Val == 10
+    check decoded.arrayVal.elements[1].kind == rvPrimitive
+    check decoded.arrayVal.elements[1].primitiveVal.kind == ptInt32
+    check decoded.arrayVal.elements[1].primitiveVal.int32Val == 20
+
+  test "RemotingValue with mixed array contents":
+    # Test array with mixed element types (primitive, string, null)
+    let arrayValue = RemotingValue(
+      kind: rvArray, 
+      arrayVal: ArrayValue(
+        arrayInfo: ArrayInfo(
+          objectId: 1,
+          length: 3
+        ),
+        elements: @[
+          RemotingValue(
+            kind: rvPrimitive,
+            primitiveVal: PrimitiveValue(
+              kind: ptInt32,
+              int32Val: 42
+            )
+          ),
+          RemotingValue(
+            kind: rvString,
+            stringVal: "Test String"
+          ),
+          RemotingValue(kind: rvNull)
+        ]
+      )
+    )
+
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, arrayValue)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+
+    check decoded.kind == rvArray
+    check decoded.arrayVal.arrayInfo.length == 3
+    check decoded.arrayVal.elements.len == 3
+    check decoded.arrayVal.elements[0].kind == rvPrimitive
+    check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
+    check decoded.arrayVal.elements[0].primitiveVal.int32Val == 42
+    check decoded.arrayVal.elements[1].kind == rvString
+    check decoded.arrayVal.elements[1].stringVal == "Test String"
+    check decoded.arrayVal.elements[2].kind == rvNull
+
+  test "RemotingValue handling of ObjectNullMultiple":
+    # Create an input stream with an array followed by ObjectNullMultiple
+    var outStream = memoryOutput()
+    
+    # First write an ArraySingleObject with length 5
+    writeArraySingleObject(outStream, ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(
+        objectId: 1,
+        length: 5
+      )
+    ))
+    
+    # Write one primitive value
+    writeMemberPrimitiveTyped(outStream, MemberPrimitiveTyped(
+      recordType: rtMemberPrimitiveTyped,
+      value: PrimitiveValue(
+        kind: ptInt32,
+        int32Val: 1
+      )
+    ))
+    
+    # Write ObjectNullMultiple with count 3
+    writeObjectNullMultiple(outStream, ObjectNullMultiple(
+      recordType: rtObjectNullMultiple,
+      nullCount: 3
+    ))
+    
+    # Write another primitive value
+    writeMemberPrimitiveTyped(outStream, MemberPrimitiveTyped(
+      recordType: rtMemberPrimitiveTyped,
+      value: PrimitiveValue(
+        kind: ptInt32,
+        int32Val: 5
+      )
+    ))
+    
+    let serialized = outStream.getOutput(seq[byte])
+    
+    # Now read it as a RemotingValue
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+    
+    # Verify the results
+    check decoded.kind == rvArray
+    check decoded.arrayVal.arrayInfo.length == 5
+    check decoded.arrayVal.elements.len == 5
+    
+    # First element should be our primitive value
+    check decoded.arrayVal.elements[0].kind == rvPrimitive
+    check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
+    check decoded.arrayVal.elements[0].primitiveVal.int32Val == 1
+    
+    # Next 3 elements should be nulls from ObjectNullMultiple
+    check decoded.arrayVal.elements[1].kind == rvNull
+    check decoded.arrayVal.elements[2].kind == rvNull
+    check decoded.arrayVal.elements[3].kind == rvNull
+    
+    # Last element should be our second primitive value
+    check decoded.arrayVal.elements[4].kind == rvPrimitive
+    check decoded.arrayVal.elements[4].primitiveVal.kind == ptInt32
+    check decoded.arrayVal.elements[4].primitiveVal.int32Val == 5
+
+  test "Method call with complex array objects":
+    # Create a method call with arguments in a call array containing complex objects
+    let methodName = newStringValueWithCode("ComplexMethod")
+    let typeName = newStringValueWithCode("TestService")
+    
+    # Create a method call with ArgsInArray flag
+    let methodCall = BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {ArgsInArray, NoContext},
+      methodName: methodName,
+      typeName: typeName
+    )
+    
+    # Create a complex array argument with nested values
+    let arrayArg = RemotingValue(
+      kind: rvArray,
+      arrayVal: ArrayValue(
+        arrayInfo: ArrayInfo(
+          objectId: 1, # Must be positive
+          length: 2
+        ),
+        elements: @[
+          RemotingValue(
+            kind: rvString,
+            stringVal: "Array Item 1"
+          ),
+          RemotingValue(
+            kind: rvArray,
+            arrayVal: ArrayValue(
+              arrayInfo: ArrayInfo(
+                objectId: 2, # Must be positive
+                length: 2
+              ),
+              elements: @[
+                RemotingValue(
+                  kind: rvPrimitive,
+                  primitiveVal: PrimitiveValue(
+                    kind: ptInt32,
+                    int32Val: 100
+                  )
+                ),
+                RemotingValue(
+                  kind: rvPrimitive,
+                  primitiveVal: PrimitiveValue(
+                    kind: ptInt32,
+                    int32Val: 200
+                  )
+                )
+              ]
+            )
+          )
+        ]
+      )
+    )
+    
+    # Create the remoting message with context
+    let ctx = newSerializationContext()
+    let msg = newRemotingMessage(
+      ctx,
+      methodCall = some(methodCall),
+      callArray = @[arrayArg]
+    )
+    
+    # Serialize
+    let serialized = serializeRemotingMessage(msg, ctx)
+    
+    # Deserialize
+    let deserialized = deserializeRemotingMessage(serialized)
+    
+    # Verify
+    check deserialized.methodCall.isSome
+    check deserialized.methodCall.get().messageEnum == {ArgsInArray, NoContext}
+    check deserialized.methodCall.get().methodName.value.stringVal.value == "ComplexMethod"
+    check deserialized.methodCallArray.len == 1
+    
+    # Check the complex array structure
+    check deserialized.methodCallArray[0].kind == rvArray
+    check deserialized.methodCallArray[0].arrayVal.elements.len == 2
+    check deserialized.methodCallArray[0].arrayVal.elements[0].kind == rvString
+    check deserialized.methodCallArray[0].arrayVal.elements[0].stringVal == "Array Item 1"
+    
+    # Check the nested array
+    check deserialized.methodCallArray[0].arrayVal.elements[1].kind == rvArray
+    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements.len == 2
+    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements[0].primitiveVal.int32Val == 100
+    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements[1].primitiveVal.int32Val == 200
+
+  test "Complex class value serialization and deserialization":
+    # Create a simple class 
+    let classInfoVal = ClassInfo(
+      objectId: 1, # Must be positive
+      name: LengthPrefixedString(value: "TestClass"),
+      memberCount: 2,
+      memberNames: @[
+        LengthPrefixedString(value: "IntProperty"),
+        LengthPrefixedString(value: "StringProperty")
+      ]
+    )
+    
+    # Create a class value with members
+    let classValue = RemotingValue(
+      kind: rvClass,
+      classVal: ClassValue(
+        classInfo: classInfoVal,
+        libraryId: 1,
+        members: @[
+          RemotingValue(
+            kind: rvPrimitive,
+            primitiveVal: PrimitiveValue(
+              kind: ptInt32,
+              int32Val: 42
+            )
+          ),
+          RemotingValue(
+            kind: rvString,
+            stringVal: "Member String Value"
+          )
+        ]
+      )
+    )
+    
+    # Serialize directly 
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, classValue)
+    let serialized = outStream.getOutput(seq[byte])
+    
+    # Deserialize directly
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+    
+    # Verify
+    check decoded.kind == rvClass
+    check decoded.classVal.classInfo.name.value == "TestClass"
+    check decoded.classVal.classInfo.memberCount == 2
+    check decoded.classVal.members.len == 2
+    
+    # Check the class members
+    check decoded.classVal.members[0].kind == rvPrimitive
+    check decoded.classVal.members[0].primitiveVal.kind == ptInt32
+    check decoded.classVal.members[0].primitiveVal.int32Val == 42
+    
+    check decoded.classVal.members[1].kind == rvString
+    check decoded.classVal.members[1].stringVal == "Member String Value"
