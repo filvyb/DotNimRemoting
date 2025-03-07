@@ -481,23 +481,8 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   if msg.methodCall.isSome and msg.methodReturn.isSome:
     raise newException(ValueError, "Message cannot have both method call and return")
 
-  # Write header (rootId adjusted based on callArray ID if present)
-  var header = msg.header
-  if msg.methodCall.isSome and (MessageFlag.ArgsInArray in msg.methodCall.get.messageEnum or
-                                MessageFlag.ContextInArray in msg.methodCall.get.messageEnum or
-                                MessageFlag.MethodSignatureInArray in msg.methodCall.get.messageEnum or
-                                MessageFlag.GenericMethod in msg.methodCall.get.messageEnum):
-    # Don't try to access last element if referencedRecords is empty
-    if msg.referencedRecords.len > 0:
-      header.rootId = ctx.recordToId.getOrDefault(msg.referencedRecords[^1], 1)  # Last ID or default
-  elif msg.methodReturn.isSome and (MessageFlag.ReturnValueInArray in msg.methodReturn.get.messageEnum or
-                                    MessageFlag.ArgsInArray in msg.methodReturn.get.messageEnum or
-                                    MessageFlag.ContextInArray in msg.methodReturn.get.messageEnum or
-                                    MessageFlag.ExceptionInArray in msg.methodReturn.get.messageEnum):
-    # Don't try to access last element if referencedRecords is empty
-    if msg.referencedRecords.len > 0:
-      header.rootId = ctx.recordToId.getOrDefault(msg.referencedRecords[^1], 1)  # Last ID or default
-  writeSerializationHeader(outp, header)
+  # Write header (rootId already set correctly in newRemotingMessage)
+  writeSerializationHeader(outp, msg.header)
 
   # Write referenced records (IDs already assigned)
   for record in msg.referencedRecords:
@@ -528,45 +513,65 @@ proc newRemotingMessage*(ctx: SerializationContext,
   for r in refs:
     discard ctx.assignId(r)
 
+  # Determine if a call array is needed and create it
+  var needsCallArray = false
+  var callArrayRef: ReferenceableRecord = nil
+  var callArrayId: int32 = 0
+  var referencedRecords = refs
+  
+  # Check if method call needs array
+  if methodCall.isSome:
+    let call = methodCall.get
+    needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or 
+                    MessageFlag.ContextInArray in call.messageEnum or
+                    MessageFlag.MethodSignatureInArray in call.messageEnum or
+                    MessageFlag.GenericMethod in call.messageEnum
+  
+  # Check if method return needs array
+  if methodReturn.isSome:
+    let ret = methodReturn.get
+    needsCallArray = needsCallArray or 
+                    MessageFlag.ReturnValueInArray in ret.messageEnum or
+                    MessageFlag.ArgsInArray in ret.messageEnum or
+                    MessageFlag.ContextInArray in ret.messageEnum or
+                    MessageFlag.ExceptionInArray in ret.messageEnum
+  
+  # Create call array if needed
+  if needsCallArray:
+    if callArray.len == 0:
+      raise newException(ValueError, "Call array expected but none provided")
+    
+    # Create the ArraySingleObject for call array
+    let arrayRecord = ArrayRecord(
+      kind: rtArraySingleObject,
+      arraySingleObject: ArraySingleObject(
+        recordType: rtArraySingleObject,
+        arrayInfo: ArrayInfo(length: callArray.len.int32)
+      )
+    )
+    
+    # Create referenceable record and assign ID
+    callArrayRef = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
+    callArrayId = ctx.assignId(callArrayRef)
+    
+    # Add to referenced records
+    referencedRecords.add(callArrayRef)
+  
+  # Create header with correct rootId
+  var header = SerializationHeaderRecord(
+    recordType: rtSerializedStreamHeader,
+    rootId: if needsCallArray: callArrayId else: 0,
+    headerId: if needsCallArray: -1 else: 0,
+    majorVersion: 1,
+    minorVersion: 0
+  )
+
+  # Create the RemotingMessage with properly set rootId
   result = RemotingMessage(
-    header: SerializationHeaderRecord(
-      recordType: rtSerializedStreamHeader,
-      rootId: 0,        # Default, adjusted below
-      headerId: 0,      # Default, adjusted below
-      majorVersion: 1,
-      minorVersion: 0
-    ),
+    header: header,
     methodCall: methodCall,
     methodReturn: methodReturn,
     methodCallArray: callArray,
-    referencedRecords: refs,
+    referencedRecords: referencedRecords,
     tail: MessageEnd(recordType: rtMessageEnd)
   )
-
-  # Adjust rootId and headerId based on flags
-  if methodCall.isSome:
-    let call = methodCall.get
-    if MessageFlag.ArgsInArray in call.messageEnum or 
-       MessageFlag.ContextInArray in call.messageEnum or
-       MessageFlag.MethodSignatureInArray in call.messageEnum or
-       MessageFlag.GenericMethod in call.messageEnum:
-      if callArray.len == 0:
-        raise newException(ValueError, "Call array expected but none provided")
-      result.header.rootId = 1    # Will be updated in writeMethodCall
-      result.header.headerId = -1
-    else:
-      result.header.rootId = 0
-      result.header.headerId = 0
-  elif methodReturn.isSome:
-    let ret = methodReturn.get
-    if MessageFlag.ReturnValueInArray in ret.messageEnum or
-       MessageFlag.ArgsInArray in ret.messageEnum or
-       MessageFlag.ContextInArray in ret.messageEnum or
-       MessageFlag.ExceptionInArray in ret.messageEnum:
-      if callArray.len == 0:
-        raise newException(ValueError, "Return array expected but none provided")
-      result.header.rootId = 1    # Will be updated in writeMethodReturn
-      result.header.headerId = -1
-    else:
-      result.header.rootId = 0
-      result.header.headerId = 0
