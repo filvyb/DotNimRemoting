@@ -244,7 +244,9 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
 
   # Handle optional call array based on flags
   if MessageFlag.ArgsInArray in result.call.messageEnum or
-     MessageFlag.ContextInArray in result.call.messageEnum:
+     MessageFlag.ContextInArray in result.call.messageEnum or
+     MessageFlag.MethodSignatureInArray in result.call.messageEnum or
+     MessageFlag.GenericMethod in result.call.messageEnum:
     
     if not inp.readable:
       raise newException(IOError, "End of stream while reading call array")
@@ -258,6 +260,11 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     # Read array values as RemotingValue objects
     for i in 0..<arrayObj.arrayInfo.length:
       result.array.add(readRemotingValue(inp))
+    # The array contains additional information based on the flags:
+    # - If MethodSignatureInArray is set, the array includes the method signature
+    # - If GenericMethod is set, the array includes the generic type arguments
+    # - If ArgsInArray is set, the array contains the arguments
+    # - If ContextInArray is set, the array contains the call context
 
 proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[RemotingValue]] =
   ## Reads a method return + optional array
@@ -407,7 +414,9 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
 
   # Write call array if specified in flags
   if MessageFlag.ArgsInArray in call.messageEnum or 
-     MessageFlag.ContextInArray in call.messageEnum:
+     MessageFlag.ContextInArray in call.messageEnum or
+     MessageFlag.MethodSignatureInArray in call.messageEnum or
+     MessageFlag.GenericMethod in call.messageEnum:
     if array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
     
@@ -426,6 +435,11 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
     # Write array values using RemotingValue
     for value in array:
       writeRemotingValue(outp, value)
+    # Note: The array should contain additional information based on the flags:
+    # - If MethodSignatureInArray is set, include the method signature
+    # - If GenericMethod is set, include the generic type arguments
+    # - If ArgsInArray is set, include the arguments
+    # - If ContextInArray is set, include the call context
 
 proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a method return + optional array, assigning IDs via context
@@ -470,7 +484,9 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   # Write header (rootId adjusted based on callArray ID if present)
   var header = msg.header
   if msg.methodCall.isSome and (MessageFlag.ArgsInArray in msg.methodCall.get.messageEnum or
-                                MessageFlag.ContextInArray in msg.methodCall.get.messageEnum):
+                                MessageFlag.ContextInArray in msg.methodCall.get.messageEnum or
+                                MessageFlag.MethodSignatureInArray in msg.methodCall.get.messageEnum or
+                                MessageFlag.GenericMethod in msg.methodCall.get.messageEnum):
     # Don't try to access last element if referencedRecords is empty
     if msg.referencedRecords.len > 0:
       header.rootId = ctx.recordToId.getOrDefault(msg.referencedRecords[^1], 1)  # Last ID or default
@@ -530,7 +546,10 @@ proc newRemotingMessage*(ctx: SerializationContext,
   # Adjust rootId and headerId based on flags
   if methodCall.isSome:
     let call = methodCall.get
-    if MessageFlag.ArgsInArray in call.messageEnum or MessageFlag.ContextInArray in call.messageEnum:
+    if MessageFlag.ArgsInArray in call.messageEnum or 
+       MessageFlag.ContextInArray in call.messageEnum or
+       MessageFlag.MethodSignatureInArray in call.messageEnum or
+       MessageFlag.GenericMethod in call.messageEnum:
       if callArray.len == 0:
         raise newException(ValueError, "Call array expected but none provided")
       result.header.rootId = 1    # Will be updated in writeMethodCall

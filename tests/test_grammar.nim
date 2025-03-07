@@ -436,3 +436,89 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
     check deserialized.methodCallArray[0].stringVal.value == "DivideByZeroException"
+
+  test "method call with method signature in array":
+    # Create methodName and typeName
+    let methodName = newStringValueWithCode("GenericMethod")
+    let typeName = newStringValueWithCode("GenericService")
+
+    # Create BinaryMethodCall with MethodSignatureInArray and NoContext
+    let binaryMethodCall = BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {MethodSignatureInArray, NoContext},  # 128 + 16 = 144
+      methodName: methodName,
+      typeName: typeName
+    )
+
+    # Create callArray with method signature as a string RemotingValue
+    let signatureValue = RemotingValue(
+      kind: rvString,
+      stringVal: LengthPrefixedString(value: "System.String, System.Int32")
+    )
+
+    # Create a context and RemotingMessage
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[signatureValue])
+
+    # Serialize the message
+    let serialized = serializeRemotingMessage(msg, ctx)
+
+    # Deserialize the byte sequence
+    let deserialized = deserializeRemotingMessage(serialized)
+
+    # Verify deserialized message
+    check deserialized.header.rootId == 1
+    check deserialized.header.headerId == -1
+    check deserialized.methodCall.isSome
+    let methodCall = deserialized.methodCall.get()
+    check methodCall.messageEnum == {MethodSignatureInArray, NoContext}
+    check methodCall.methodName.value.stringVal.value == "GenericMethod"
+    check methodCall.typeName.value.stringVal.value == "GenericService"
+    check methodCall.args.len == 0
+    check deserialized.methodCallArray.len == 1
+    check deserialized.methodCallArray[0].kind == rvString
+    check deserialized.methodCallArray[0].stringVal.value == "System.String, System.Int32"
+    check deserialized.tail.recordType == rtMessageEnd
+
+  test "method call with generic method":
+    # Create methodName and typeName
+    let methodName = newStringValueWithCode("GetCollection")
+    let typeName = newStringValueWithCode("CollectionService")
+
+    # Create BinaryMethodCall with GenericMethod and NoContext
+    let binaryMethodCall = BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {GenericMethod, NoContext},  # 16384 + 16 = 16400
+      methodName: methodName,
+      typeName: typeName
+    )
+
+    # Create callArray with generic type argument as a string RemotingValue
+    let typeArgValue = RemotingValue(
+      kind: rvString,
+      stringVal: LengthPrefixedString(value: "System.Int32")
+    )
+
+    # Create a context and RemotingMessage
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[typeArgValue])
+
+    # Serialize the message
+    let serialized = serializeRemotingMessage(msg, ctx)
+
+    # Deserialize the byte sequence
+    let deserialized = deserializeRemotingMessage(serialized)
+
+    # Verify deserialized message
+    check deserialized.header.rootId == 1
+    check deserialized.header.headerId == -1
+    check deserialized.methodCall.isSome
+    let methodCall = deserialized.methodCall.get()
+    check methodCall.messageEnum == {GenericMethod, NoContext}
+    check methodCall.methodName.value.stringVal.value == "GetCollection"
+    check methodCall.typeName.value.stringVal.value == "CollectionService"
+    check methodCall.args.len == 0
+    check deserialized.methodCallArray.len == 1
+    check deserialized.methodCallArray[0].kind == rvString
+    check deserialized.methodCallArray[0].stringVal.value == "System.Int32"
+    check deserialized.tail.recordType == rtMessageEnd
