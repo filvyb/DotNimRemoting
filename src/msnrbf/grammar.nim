@@ -15,10 +15,11 @@ type
     ## Represents a complete remoting message that follows MS-NRBF grammar
     ## This is a root object for a complete message exchange
     header*: SerializationHeaderRecord     # Required start header
-    referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
     methodCall*: Option[BinaryMethodCall]        # Required method call
     methodReturn*: Option[BinaryMethodReturn]    # Or method return
     methodCallArray*: seq[RemotingValue]   # Optional method call array
+    referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
+    callArrayRecord*: Option[ReferenceableRecord] # Optional call array record
     tail*: MessageEnd                      # Required message end marker
 
   ReferenceableRecord* = ref object
@@ -165,13 +166,11 @@ proc readReferenceable*(inp: InputStream, ctx: ReferenceContext): ReferenceableR
   ## Section 2.7 grammar: referenceable = Classes/Arrays/BinaryObjectString
 
   # First try reading library reference that may precede any referenceable
-  let lib = readRecord(inp)
-  if lib == rtBinaryLibrary:
+  let recordType = peekRecord(inp)
+  if recordType == rtBinaryLibrary:
     let library = readBinaryLibrary(inp)
     ctx.addLibrary(library)
 
-  # Read the record type
-  let recordType = readRecord(inp) 
   result = ReferenceableRecord(kind: recordType)
 
   # Handle based on record type following grammar rules
@@ -408,70 +407,51 @@ proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord) =
   else:
     raise newException(ValueError, "Invalid referenceable record type: " & $record.kind)
 
-proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], ctx: SerializationContext) =
-  ## Writes a method call + optional array, assigning IDs via context
+proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], callArrayRecord: Option[ReferenceableRecord], ctx: SerializationContext) =
+  ## Writes a method call and its optional call array, using the provided callArrayRecord if needed
+  # Write the BinaryMethodCall record to the output stream
   writeBinaryMethodCall(outp, call)
 
-  # Write call array if specified in flags
+  # Determine if a call array is required based on the messageEnum flags
   if MessageFlag.ArgsInArray in call.messageEnum or 
      MessageFlag.ContextInArray in call.messageEnum or
      MessageFlag.MethodSignatureInArray in call.messageEnum or
      MessageFlag.GenericMethod in call.messageEnum:
-    if array.len == 0:
+    # Validate that a call array record and elements are provided
+    if callArrayRecord.isNone or array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
     
-    # Create and assign ID to ArraySingleObject
-    let arrayRecord = ArrayRecord(
-      kind: rtArraySingleObject,
-      arraySingleObject: ArraySingleObject(
-        recordType: rtArraySingleObject,
-        arrayInfo: ArrayInfo(length: array.len.int32)  # objectId set by assignId
-      )
-    )
-    let refRecord = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
-    discard ctx.assignId(refRecord)  # Assigns and sets arrayInfo.objectId
-    writeReferenceable(outp, refRecord)
+    # Write the call array record (e.g., ArraySingleObject)
+    writeReferenceable(outp, callArrayRecord.get)
     
-    # Write array values using RemotingValue
+    # Serialize each element in the call array
     for value in array:
       writeRemotingValue(outp, value)
-    # Note: The array should contain additional information based on the flags:
-    # - If MethodSignatureInArray is set, include the method signature
-    # - If GenericMethod is set, include the generic type arguments
-    # - If ArgsInArray is set, include the arguments
-    # - If ContextInArray is set, include the call context
 
-proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], ctx: SerializationContext) =
-  ## Writes a method return + optional array, assigning IDs via context
+proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], callArrayRecord: Option[ReferenceableRecord], ctx: SerializationContext) =
+  ## Writes a BinaryMethodReturn record and its optional call array to the output stream
   writeBinaryMethodReturn(outp, ret)
 
   # Write return array if specified in flags
-  if MessageFlag.ReturnValueInArray in ret.messageEnum or
-     MessageFlag.ArgsInArray in ret.messageEnum or
-     MessageFlag.ContextInArray in ret.messageEnum or
+  if MessageFlag.ReturnValueInArray in ret.messageEnum or 
+     MessageFlag.ArgsInArray in ret.messageEnum or 
+     MessageFlag.ContextInArray in ret.messageEnum or 
      MessageFlag.ExceptionInArray in ret.messageEnum:
-    if array.len == 0:
-      raise newException(ValueError, "Return array expected but none provided")
+    # Validate that a call array is provided when expected
+    if callArrayRecord.isNone or array.len == 0:
+      raise newException(ValueError, "Call array expected but none provided")
     
-    # Create and assign ID to ArraySingleObject
-    let arrayRecord = ArrayRecord(
-      kind: rtArraySingleObject,
-      arraySingleObject: ArraySingleObject(
-        recordType: rtArraySingleObject,
-        arrayInfo: ArrayInfo(length: array.len.int32)  # objectId set by assignId
-      )
-    )
-    let refRecord = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
-    discard ctx.assignId(refRecord)  # Assigns and sets arrayInfo.objectId
-    writeReferenceable(outp, refRecord)
+    # Write the call array record (e.g., ArraySingleObject)
+    writeReferenceable(outp, callArrayRecord.get)
     
-    # Write array values using RemotingValue
+    # Write each RemotingValue in the array
     for value in array:
       writeRemotingValue(outp, value)
 
 proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: SerializationContext) =
-  ## Writes complete remoting message, using context for ID management
-  # Validate message
+  ## Writes a complete remoting message, using the context for ID management.
+  
+  # Validate message structure
   if msg.header.recordType != rtSerializedStreamHeader:
     raise newException(ValueError, "Invalid header record type")
   if msg.tail.recordType != rtMessageEnd:
@@ -481,20 +461,20 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   if msg.methodCall.isSome and msg.methodReturn.isSome:
     raise newException(ValueError, "Message cannot have both method call and return")
 
-  # Write header (rootId already set correctly in newRemotingMessage)
+  # Write the header with pre-set rootId
   writeSerializationHeader(outp, msg.header)
 
-  # Write referenced records (IDs already assigned)
+  # Write referenced records (e.g., classes, arrays, strings)
   for record in msg.referencedRecords:
     writeReferenceable(outp, record)
 
-  # Write method call or return with array
+  # Write method call or method return, including the call array if present
   if msg.methodCall.isSome:
-    writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray, ctx)
-  else:
-    writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, ctx)
+    writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray, msg.callArrayRecord, ctx)
+  elif msg.methodReturn.isSome:
+    writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, msg.callArrayRecord, ctx)
 
-  # Write tail
+  # Write the message end
   writeMessageEnd(outp, msg.tail)
 
 proc newRemotingMessage*(ctx: SerializationContext,
@@ -513,35 +493,27 @@ proc newRemotingMessage*(ctx: SerializationContext,
   for r in refs:
     discard ctx.assignId(r)
 
-  # Determine if a call array is needed and create it
+  # Determine if a call array is needed based on message flags
   var needsCallArray = false
-  var callArrayRef: ReferenceableRecord = nil
-  var callArrayId: int32 = 0
-  var referencedRecords = refs
-  
-  # Check if method call needs array
   if methodCall.isSome:
     let call = methodCall.get
-    needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or 
-                    MessageFlag.ContextInArray in call.messageEnum or
-                    MessageFlag.MethodSignatureInArray in call.messageEnum or
-                    MessageFlag.GenericMethod in call.messageEnum
-  
-  # Check if method return needs array
-  if methodReturn.isSome:
+    needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or
+                     MessageFlag.ContextInArray in call.messageEnum or
+                     MessageFlag.MethodSignatureInArray in call.messageEnum or
+                     MessageFlag.GenericMethod in call.messageEnum
+  elif methodReturn.isSome:
     let ret = methodReturn.get
-    needsCallArray = needsCallArray or 
-                    MessageFlag.ReturnValueInArray in ret.messageEnum or
-                    MessageFlag.ArgsInArray in ret.messageEnum or
-                    MessageFlag.ContextInArray in ret.messageEnum or
-                    MessageFlag.ExceptionInArray in ret.messageEnum
-  
-  # Create call array if needed
+    needsCallArray = MessageFlag.ReturnValueInArray in ret.messageEnum or
+                     MessageFlag.ArgsInArray in ret.messageEnum or
+                     MessageFlag.ContextInArray in ret.messageEnum or
+                     MessageFlag.ExceptionInArray in ret.messageEnum
+
+  # Create call array record if needed
+  var callArrayRef = none(ReferenceableRecord)
+  var rootId: int32 = 0
   if needsCallArray:
     if callArray.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
-    
-    # Create the ArraySingleObject for call array
     let arrayRecord = ArrayRecord(
       kind: rtArraySingleObject,
       arraySingleObject: ArraySingleObject(
@@ -549,29 +521,27 @@ proc newRemotingMessage*(ctx: SerializationContext,
         arrayInfo: ArrayInfo(length: callArray.len.int32)
       )
     )
-    
-    # Create referenceable record and assign ID
-    callArrayRef = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
-    callArrayId = ctx.assignId(callArrayRef)
-    
-    # Add to referenced records
-    referencedRecords.add(callArrayRef)
-  
-  # Create header with correct rootId
-  var header = SerializationHeaderRecord(
+    var refRecord = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
+    rootId = ctx.assignId(refRecord)
+    refRecord.arrayRecord.arraySingleObject.arrayInfo.objectId = rootId
+    callArrayRef = some(refRecord)
+
+  # Create header with appropriate rootId and headerId
+  let header = SerializationHeaderRecord(
     recordType: rtSerializedStreamHeader,
-    rootId: if needsCallArray: callArrayId else: 0,
+    rootId: rootId,
     headerId: if needsCallArray: -1 else: 0,
     majorVersion: 1,
     minorVersion: 0
   )
 
-  # Create the RemotingMessage with properly set rootId
+  # Construct and return the RemotingMessage
   result = RemotingMessage(
     header: header,
     methodCall: methodCall,
     methodReturn: methodReturn,
     methodCallArray: callArray,
-    referencedRecords: referencedRecords,
+    callArrayRecord: callArrayRef,
+    referencedRecords: refs,
     tail: MessageEnd(recordType: rtMessageEnd)
   )
