@@ -1,5 +1,5 @@
 import faststreams/[inputs, outputs]
-import options, unicode, sequtils
+import options, unicode, sequtils, strutils
 import enums, types, grammar
 import records/[arrays, class, member, methodinv]
 
@@ -346,5 +346,3 @@ proc binaryObjectString*(ctx: SerializationContext, value: string): BinaryObject
     stringRecord: result
   )
   discard ctx.assignId(refRecord) # Sets objectId
-
-

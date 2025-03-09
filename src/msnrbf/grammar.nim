@@ -2,7 +2,7 @@ import faststreams/[inputs, outputs]
 import enums
 import records/[arrays, class, member, methodinv, serialization]
 import tables
-import options
+import options, strutils
 import hashes
 
 type
@@ -64,6 +64,40 @@ type
       arraySingleString*: ArraySingleString
     else:
       discard
+
+# String representations
+proc `$`*(msg: RemotingMessage): string =
+  ## Convert a RemotingMessage to string representation
+  var parts = @[
+    "RemotingMessage:",
+    "  Header:",
+    "    RootId: " & $msg.header.rootId,
+    "    HeaderId: " & $msg.header.headerId,
+    "    Version: " & $msg.header.majorVersion & "." & $msg.header.minorVersion
+  ]
+  
+  if msg.methodCall.isSome:
+    let callStr = $msg.methodCall.get
+    parts.add("  " & callStr.replace("\n", "\n  "))
+  
+  if msg.methodReturn.isSome:
+    let retStr = $msg.methodReturn.get
+    parts.add("  " & retStr.replace("\n", "\n  "))
+  
+  if msg.methodCallArray.len > 0:
+    var elements: seq[string] = @[]
+    for elem in msg.methodCallArray:
+      elements.add($elem)
+    parts.add("  CallArray: [" & elements.join(", ") & "]")
+  
+  if msg.referencedRecords.len > 0:
+    parts.add("  ReferencedRecords: " & $msg.referencedRecords.len & " records")
+    for i, record in msg.referencedRecords:
+      parts.add("    Record[" & $i & "]: kind=" & $record.kind)
+  
+  parts.add("  End of RemotingMessage " & $msg.tail.recordType)
+  
+  return parts.join("\n")
 
 # Reference tracking during deserialization
 type
@@ -358,13 +392,12 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   # Read trailing referenceable records until MessageEnd
   while inp.readable:
     let nextType = RecordType(inp.peek)
-    
+
     # Found end marker
     if nextType == rtMessageEnd:
       discard inp.read # Consume the record type
       result.tail = MessageEnd(recordType: rtMessageEnd)
       return
-      
     # Read referenceable record
     result.referencedRecords.add(readReferenceable(inp, ctx))
 

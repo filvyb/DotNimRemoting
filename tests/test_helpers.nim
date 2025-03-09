@@ -5,7 +5,6 @@ import msnrbf/[enums, types, helpers, grammar]
 import msnrbf/records/[arrays, class, member, methodinv, serialization]
 
 suite "MSNRBF Helpers":
-  
   test "PrimitiveValue creation":
     # Test various primitive value creators
     let bv = boolValue(true)
@@ -218,4 +217,3 @@ suite "MSNRBF Helpers":
     let str = binaryObjectString(ctx, "Test string")
     check(str.recordType == rtBinaryObjectString)
     check(str.value.value == "Test string")
-

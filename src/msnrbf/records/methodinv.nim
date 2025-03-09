@@ -4,6 +4,7 @@ import ../types
 import member
 import class
 import arrays
+import strutils
 
 type
   ValueWithCode* = object
@@ -343,3 +344,76 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
     writeArraySingleObject(outp, arrayRecord)
     for elem in value.arrayVal.elements:
       writeRemotingValue(outp, elem)
+
+# String representation
+proc `$`*(valueWithCode: ValueWithCode): string =
+  ## Convert a ValueWithCode to string representation
+  return $valueWithCode.value
+
+proc `$`*(arrayValues: ArrayOfValueWithCode): string =
+  ## Convert an ArrayOfValueWithCode to string representation
+  var values: seq[string] = @[]
+  for val in arrayValues:
+    values.add($val)
+  return "[" & values.join(", ") & "]"
+
+proc `$`*(call: BinaryMethodCall): string =
+  ## Convert a BinaryMethodCall to string representation
+  var parts = @[
+    "MethodCall:",
+    "  Method: " & call.methodName.value.stringVal.value,
+    "  Type: " & call.typeName.value.stringVal.value,
+    "  Flags: " & $call.messageEnum
+  ]
+  
+  if MessageFlag.ContextInline in call.messageEnum:
+    parts.add("  Context: " & call.callContext.value.stringVal.value)
+    
+  if MessageFlag.ArgsInline in call.messageEnum:
+    parts.add("  Args: " & $call.args)
+  
+  return parts.join("\n")
+
+proc `$`*(ret: BinaryMethodReturn): string =
+  ## Convert a BinaryMethodReturn to string representation
+  var parts = @[
+    "MethodReturn:",
+    "  Flags: " & $ret.messageEnum
+  ]
+  
+  if MessageFlag.ReturnValueInline in ret.messageEnum:
+    parts.add("  ReturnValue: " & $ret.returnValue)
+    
+  if MessageFlag.ContextInline in ret.messageEnum:
+    parts.add("  Context: " & ret.callContext.value.stringVal.value)
+    
+  if MessageFlag.ArgsInline in ret.messageEnum:
+    parts.add("  Args: " & $ret.args)
+  
+  return parts.join("\n")
+
+proc `$`*(remVal: RemotingValue): string =
+  ## Convert a RemotingValue to string representation
+  case remVal.kind
+  of rvPrimitive: $remVal.primitiveVal
+  of rvString: "\"" & remVal.stringVal.value & "\""
+  of rvNull: "null"
+  of rvReference: "Reference(id=" & $remVal.idRef & ")"
+  of rvClass:
+    var parts = @[
+      "Class(" & remVal.classVal.classInfo.name.value & ", id=" & $remVal.classVal.classInfo.objectId & "):",
+      "  Members:"
+    ]
+    for i, member in remVal.classVal.members:
+      if i < remVal.classVal.classInfo.memberNames.len:
+        let name = remVal.classVal.classInfo.memberNames[i].value
+        parts.add("    " & name & ": " & $member)
+      else:
+        parts.add("    [" & $i & "]: " & $member)
+    parts.join("\n")
+  of rvArray:
+    var elements: seq[string] = @[]
+    for elem in remVal.arrayVal.elements:
+      elements.add($elem)
+    "Array(id=" & $remVal.arrayVal.arrayInfo.objectId & ", length=" & 
+    $remVal.arrayVal.arrayInfo.length & "): [" & elements.join(", ") & "]"

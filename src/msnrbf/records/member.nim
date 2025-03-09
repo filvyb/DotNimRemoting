@@ -330,3 +330,26 @@ proc canWriteUntyped*(value: PrimitiveValue): bool =
 proc canWriteUntyped*(member: MemberPrimitiveTyped): bool =
   ## Helper that works directly with MemberPrimitiveTyped
   canWriteUntyped(member.value)
+
+# String representation
+proc `$`*(value: PrimitiveValue): string =
+  ## Convert a PrimitiveValue to string representation
+  case value.kind
+  of ptBoolean: $value.boolVal
+  of ptByte: $value.byteVal
+  of ptChar: "'" & value.charVal & "'"
+  of ptDouble: $value.doubleVal
+  of ptInt16: $value.int16Val
+  of ptUInt16: $value.uint16Val
+  of ptInt32: $value.int32Val
+  of ptUInt32: $value.uint32Val
+  of ptInt64: $value.int64Val
+  of ptUInt64: $value.uint64Val
+  of ptSByte: $value.sbyteVal
+  of ptSingle: $value.singleVal
+  of ptTimeSpan: $value.timeSpanVal & " ticks"
+  of ptDateTime: $value.dateTimeVal.ticks & " ticks (kind: " & $value.dateTimeVal.kind & ")"
+  of ptDecimal: value.decimalVal.value
+  of ptString: "\"" & value.stringVal.value & "\""
+  of ptNull: "null"
+  else: $value.kind  # ptUnused or reserved values

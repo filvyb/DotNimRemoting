@@ -1,5 +1,6 @@
 import faststreams/[inputs, outputs]
 import types
+import strutils
 
 type
   RecordType* = enum
@@ -206,3 +207,15 @@ proc writeMessageFlags*(outp: OutputStream, flags: MessageFlags) =
     
   let bytes = cast[array[4, byte]](value)
   outp.write(bytes)
+
+# String representation
+proc `$`*(flags: MessageFlags): string =
+  ## Convert MessageFlags to string representation
+  var flagNames: seq[string] = @[]
+  for flag in MessageFlag:
+    if flag in flags:
+      flagNames.add($flag)
+  
+  if flagNames.len == 0:
+    return "{}"
+  return "{" & flagNames.join(", ") & "}"

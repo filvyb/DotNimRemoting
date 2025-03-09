@@ -4,67 +4,36 @@ import msnrbf/helpers
 import msnrbf/enums
 import msnrbf/types
 import msnrbf/records/methodinv
-import msnrbf/records/member # For PrimitiveValue
+import msnrbf/records/member
 import options
 
 suite "RemotingMessage serialization and deserialization":
   test "simple method call with no arguments":
-    # Create methodName and typeName as StringValueWithCode
     let methodName = newStringValueWithCode("Ping")
     let typeName = newStringValueWithCode("MyServer")
-
-    # Create BinaryMethodCall with NoArgs and NoContext flags
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {NoArgs, NoContext}, # Bit 0 (1) + Bit 4 (16) = 17
+      messageEnum: {NoArgs, NoContext},
       methodName: methodName,
       typeName: typeName
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
-    # Adjust header fields per spec: no callArray means rootId and headerId are 0
     msg.header.rootId = 0
     msg.header.headerId = 0
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence based on MS-NRBF spec
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
-      0x00,                   # RecordTypeEnum: rtSerializedStreamHeader
-      0x00, 0x00, 0x00, 0x00, # rootId: 0
-      0x00, 0x00, 0x00, 0x00, # headerId: 0
-      0x01, 0x00, 0x00, 0x00, # majorVersion: 1
-      0x00, 0x00, 0x00, 0x00, # minorVersion: 0
-      # BinaryMethodCall (21 bytes)
-      0x15,                   # RecordTypeEnum: rtMethodCall (21)
-      0x11, 0x00, 0x00, 0x00, # messageEnum: 17 (NoArgs=1, NoContext=16)
-      0x12,                   # methodName PrimitiveTypeEnum: ptString
-      0x04,                   # LengthPrefixedString length: 4 ("Ping")
-      0x50, 0x69, 0x6E, 0x67, # "Ping" in UTF-8
-      0x12,                   # typeName PrimitiveTypeEnum: ptString
-      0x08,                   # LengthPrefixedString length: 8 ("MyServer")
-      0x4D, 0x79, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, # "MyServer" in UTF-8
-      # MessageEnd (1 byte)
-      0x0B                    # RecordTypeEnum: rtMessageEnd (11)
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x15, 0x11, 0x00, 0x00, 0x00, 0x12, 0x04, 0x50, 0x69, 0x6E, 0x67, 0x12, 0x08, 0x4D, 0x79, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
+      0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message fields
     check deserialized.header.recordType == rtSerializedStreamHeader
     check deserialized.header.rootId == 0
     check deserialized.header.headerId == 0
     check deserialized.header.majorVersion == 1
     check deserialized.header.minorVersion == 0
-    
     check deserialized.methodCall.isSome
     check deserialized.methodReturn.isNone
     let methodCall = deserialized.methodCall.get()
@@ -72,60 +41,35 @@ suite "RemotingMessage serialization and deserialization":
     check methodCall.messageEnum == {NoArgs, NoContext}
     check methodCall.methodName.value.stringVal.value == "Ping"
     check methodCall.typeName.value.stringVal.value == "MyServer"
-    check methodCall.args.len == 0 # NoArgs flag set
-    check methodCall.callContext.primitiveType == PrimitiveType(0) # NoContext flag set, default value
-
+    check methodCall.args.len == 0
+    check methodCall.callContext.primitiveType == PrimitiveType(0)
     check deserialized.methodCallArray.len == 0
     check deserialized.referencedRecords.len == 0
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with inline primitive arguments":
-    # Create methodName and typeName
     let methodName = newStringValueWithCode("Add")
     let typeName = newStringValueWithCode("MathService")
-
-    # Create inline arguments: integers 3 and 5
     let arg1 = ValueWithCode(primitiveType: ptInt32, value: int32Value(3))
     let arg2 = ValueWithCode(primitiveType: ptInt32, value: int32Value(5))
-
-    # Create BinaryMethodCall with ArgsInline and NoContext
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {ArgsInline, NoContext},  # 2 + 16 = 18
+      messageEnum: {ArgsInline, NoContext},
       methodName: methodName,
       typeName: typeName,
       args: @[arg1, arg2]
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      # BinaryMethodCall (37 bytes)
-      0x15, 0x12, 0x00, 0x00, 0x00,  # recordType=21, messageEnum=18
-      0x12, 0x03, 0x41, 0x64, 0x64,  # methodName: ptString, len=3, "Add"
-      0x12, 0x0B, 0x4D, 0x61, 0x74, 0x68, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,  # typeName: ptString, len=11, "MathService"
-      0x02, 0x00, 0x00, 0x00,  # args length=2
-      0x08, 0x03, 0x00, 0x00, 0x00,  # arg1: ptInt32, value=3
-      0x08, 0x05, 0x00, 0x00, 0x00,  # arg2: ptInt32, value=5
-      # MessageEnd (1 byte)
+      0x15, 0x12, 0x00, 0x00, 0x00, 0x12, 0x03, 0x41, 0x64, 0x64, 0x12, 0x0B, 0x4D, 0x61, 0x74, 0x68, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
+      0x02, 0x00, 0x00, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x08, 0x05, 0x00, 0x00, 0x00,
       0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 0
     check deserialized.header.headerId == 0
     check deserialized.methodCall.isSome
@@ -141,38 +85,35 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with arguments in separate call array":
-    # Create methodName and typeName
     let methodName = newStringValueWithCode("Foo")
     let typeName = newStringValueWithCode("Bar")
-
-    # Create BinaryMethodCall with ArgsInArray and NoContext
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {ArgsInArray, NoContext},  # 8 + 16 = 24
+      messageEnum: {ArgsInArray, NoContext},
       methodName: methodName,
       typeName: typeName
     )
-
-    # Create callArray with one argument using RemotingValue for primitive
     let value = RemotingValue(
       kind: rvPrimitive,
-      primitiveVal: PrimitiveValue(
-        kind: ptInt32,
-        int32Val: 10
-      )
+      primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 10)
     )
-
-    # Create a context and RemotingMessage
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[value])
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Deserialize the byte sequence
+    let expected: seq[byte] = @[
+      # SerializationHeader (rootId=1, headerId=-1)
+      0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      # BinaryMethodCall (messageEnum=24)
+      0x15, 0x18, 0x00, 0x00, 0x00, 0x12, 0x03, 0x46, 0x6F, 0x6F, 0x12, 0x03, 0x42, 0x61, 0x72,
+      # ArraySingleObject (objectId=1, length=1)
+      0x07, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      # RemotingValue (int32 10)
+      0x08, 0x0A, 0x00, 0x00, 0x00,
+      # MessageEnd
+      0x0B
+    ]
+    check serialized == expected
     let deserialized = deserializeRemotingMessage(serialized)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 1
     check deserialized.header.headerId == -1
     check deserialized.methodCall.isSome
@@ -180,7 +121,7 @@ suite "RemotingMessage serialization and deserialization":
     check methodCall.messageEnum == {ArgsInArray, NoContext}
     check methodCall.methodName.value.stringVal.value == "Foo"
     check methodCall.typeName.value.stringVal.value == "Bar"
-    check methodCall.args.len == 0  # ArgsInArray, so no inline args
+    check methodCall.args.len == 0
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvPrimitive
     check deserialized.methodCallArray[0].primitiveVal.kind == ptInt32
@@ -188,39 +129,22 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method return with inline primitive return value":
-    # Create BinaryMethodReturn with ReturnValueInline, NoArgs, NoContext
     let returnValue = ValueWithCode(primitiveType: ptInt32, value: int32Value(8))
     let binaryMethodReturn = BinaryMethodReturn(
       recordType: rtMethodReturn,
-      messageEnum: {NoArgs, NoContext, ReturnValueInline},  # 1 + 16 + 2048 = 2065
+      messageEnum: {NoArgs, NoContext, ReturnValueInline},
       returnValue: returnValue
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn))
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      # BinaryMethodReturn (10 bytes)
-      0x16, 0x11, 0x08, 0x00, 0x00,  # recordType=22, messageEnum=2065 (0x0811)
-      0x08, 0x08, 0x00, 0x00, 0x00,  # returnValue: ptInt32, value=8
-      # MessageEnd (1 byte)
+      0x16, 0x11, 0x08, 0x00, 0x00, 0x08, 0x08, 0x00, 0x00, 0x00,
       0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 0
     check deserialized.header.headerId == 0
     check deserialized.methodReturn.isSome
@@ -231,38 +155,32 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method return with return value in separate call array":
-    # Create BinaryMethodReturn with ReturnValueInArray, NoArgs, NoContext
     let binaryMethodReturn = BinaryMethodReturn(
       recordType: rtMethodReturn,
-      messageEnum: {NoArgs, NoContext, ReturnValueInArray},  # 1 + 16 + 4096 = 4113
+      messageEnum: {NoArgs, NoContext, ReturnValueInArray}
     )
-
-    # Create callArray with one return value using RemotingValue
     let value = RemotingValue(
       kind: rvPrimitive,
-      primitiveVal: PrimitiveValue(
-        kind: ptInt32,
-        int32Val: 42
-      )
+      primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 42)
     )
-
-    # Create a context and RemotingMessage 
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn), callArray = @[value])
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Deserialize the byte sequence
+    let expected: seq[byte] = @[
+      0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x16, 0x11, 0x10, 0x00, 0x00,
+      0x07, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x08, 0x2A, 0x00, 0x00, 0x00,
+      0x0B
+    ]
+    check serialized == expected
     let deserialized = deserializeRemotingMessage(serialized)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 1
     check deserialized.header.headerId == -1
     check deserialized.methodReturn.isSome
     let methodReturn = deserialized.methodReturn.get()
     check methodReturn.messageEnum == {NoArgs, NoContext, ReturnValueInArray}
-    check methodReturn.returnValue.primitiveType == PrimitiveType(0)  # No inline return value
+    check methodReturn.returnValue.primitiveType == PrimitiveType(0)
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvPrimitive
     check deserialized.methodCallArray[0].primitiveVal.kind == ptInt32
@@ -270,44 +188,24 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with no arguments":
-    # Create methodName and typeName
     let methodName = newStringValueWithCode("Ping")
     let typeName = newStringValueWithCode("MyServer")
-
-    # Create BinaryMethodCall with NoArgs and NoContext
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {NoArgs, NoContext},  # 1 + 16 = 17
+      messageEnum: {NoArgs, NoContext},
       methodName: methodName,
       typeName: typeName
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      # BinaryMethodCall (31 bytes)
-      0x15, 0x11, 0x00, 0x00, 0x00,  # recordType=21, messageEnum=17
-      0x12, 0x04, 0x50, 0x69, 0x6E, 0x67,  # methodName: ptString, len=4, "Ping"
-      0x12, 0x08, 0x4D, 0x79, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,  # typeName: ptString, len=8, "MyServer"
-      # MessageEnd (1 byte)
+      0x15, 0x11, 0x00, 0x00, 0x00, 0x12, 0x04, 0x50, 0x69, 0x6E, 0x67, 0x12, 0x08, 0x4D, 0x79, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
       0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message
     check deserialized.methodCall.isSome
     let methodCall = deserialized.methodCall.get()
     check methodCall.messageEnum == {NoArgs, NoContext}
@@ -317,84 +215,49 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method return with no return value (void)":
-    # Create BinaryMethodReturn with NoArgs, NoContext, ReturnValueVoid
     let binaryMethodReturn = BinaryMethodReturn(
       recordType: rtMethodReturn,
-      messageEnum: {NoArgs, NoContext, ReturnValueVoid},  # 1 + 16 + 1024 = 1041
+      messageEnum: {NoArgs, NoContext, ReturnValueVoid}
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn))
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      # BinaryMethodReturn (5 bytes)
-      0x16, 0x11, 0x04, 0x00, 0x00,  # recordType=22, messageEnum=1041 (0x0411)
-      # MessageEnd (1 byte)
+      0x16, 0x11, 0x04, 0x00, 0x00,
       0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message
     check deserialized.methodReturn.isSome
     let methodReturn = deserialized.methodReturn.get()
     check methodReturn.messageEnum == {NoArgs, NoContext, ReturnValueVoid}
-    check methodReturn.returnValue.primitiveType == PrimitiveType(0)  # No return value
+    check methodReturn.returnValue.primitiveType == PrimitiveType(0)
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with call context":
-    # Create methodName, typeName, and callContext
     let methodName = newStringValueWithCode("SecureMethod")
     let typeName = newStringValueWithCode("SecureServer")
     let callContext = newStringValueWithCode("authToken123")
-
-    # Create BinaryMethodCall with ContextInline and NoArgs
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {ContextInline, NoArgs},  # 32 + 1 = 33
+      messageEnum: {ContextInline, NoArgs},
       methodName: methodName,
       typeName: typeName,
       callContext: callContext
     )
-
-    # Create RemotingMessage with context
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall))
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Define expected byte sequence
     let expected: seq[byte] = @[
-      # SerializationHeaderRecord (17 bytes)
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      # BinaryMethodCall (43 bytes)
-      0x15, 0x21, 0x00, 0x00, 0x00,  # recordType=21, messageEnum=33 (0x0021)
-      0x12, 0x0C, 0x53, 0x65, 0x63, 0x75, 0x72, 0x65, 0x4D, 0x65, 0x74, 0x68, 0x6F, 0x64,  # methodName: ptString, len=12, "SecureMethod"
-      0x12, 0x0C, 0x53, 0x65, 0x63, 0x75, 0x72, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,  # typeName: ptString, len=12, "SecureServer"
-      0x12, 0x0C, 0x61, 0x75, 0x74, 0x68, 0x54, 0x6F, 0x6B, 0x65, 0x6E, 0x31, 0x32, 0x33,  # callContext: ptString, len=12, "authToken123"
-      # MessageEnd (1 byte)
+      0x15, 0x21, 0x00, 0x00, 0x00, 0x12, 0x0C, 0x53, 0x65, 0x63, 0x75, 0x72, 0x65, 0x4D, 0x65, 0x74, 0x68, 0x6F, 0x64,
+      0x12, 0x0C, 0x53, 0x65, 0x63, 0x75, 0x72, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
+      0x12, 0x0C, 0x61, 0x75, 0x74, 0x68, 0x54, 0x6F, 0x6B, 0x65, 0x6E, 0x31, 0x32, 0x33,
       0x0B
     ]
-
-    # Verify serialization
     check serialized == expected
-
-    # Deserialize the byte sequence
     let deserialized = deserializeRemotingMessage(expected)
-
-    # Verify deserialized message
     check deserialized.methodCall.isSome
     let methodCall = deserialized.methodCall.get()
     check methodCall.messageEnum == {ContextInline, NoArgs}
@@ -405,30 +268,25 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method return with exception":
-    # Define an exception value as a RemotingValue
     let exceptionValue = RemotingValue(
       kind: rvString,
       stringVal: LengthPrefixedString(value: "DivideByZeroException")
     )
-
-    # Create BinaryMethodReturn with valid flags: NoContext and ExceptionInArray
     let binaryMethodReturn = BinaryMethodReturn(
       recordType: rtMethodReturn,
-      messageEnum: {NoContext, ExceptionInArray}  # 16 + 8192 = 8208
+      messageEnum: {NoContext, ExceptionInArray}
     )
-
-    # Create the message with the exception in the call array
     let ctx = newSerializationContext()
-    var msg = newRemotingMessage(
-      ctx,
-      methodReturn = some(binaryMethodReturn),
-      callArray = @[exceptionValue]
-    )
-
-    # Serialize the message
+    var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn), callArray = @[exceptionValue])
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Deserialize and verify
+    let expected: seq[byte] = @[
+      0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x16, 0x10, 0x20, 0x00, 0x00,
+      0x07, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x12, 0x15, 0x44, 0x69, 0x76, 0x69, 0x64, 0x65, 0x42, 0x79, 0x5A, 0x65, 0x72, 0x6F, 0x45, 0x78, 0x63, 0x65, 0x70, 0x74, 0x69, 0x6F, 0x6E,
+      0x0B
+    ]
+    check serialized == expected
     let deserialized = deserializeRemotingMessage(serialized)
     check deserialized.methodReturn.isSome
     let methodReturn = deserialized.methodReturn.get()
@@ -436,37 +294,34 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
     check deserialized.methodCallArray[0].stringVal.value == "DivideByZeroException"
+    check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with method signature in array":
-    # Create methodName and typeName
     let methodName = newStringValueWithCode("GenericMethod")
     let typeName = newStringValueWithCode("GenericService")
-
-    # Create BinaryMethodCall with MethodSignatureInArray and NoContext
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {MethodSignatureInArray, NoContext},  # 128 + 16 = 144
+      messageEnum: {MethodSignatureInArray, NoContext},
       methodName: methodName,
       typeName: typeName
     )
-
-    # Create callArray with method signature as a string RemotingValue
     let signatureValue = RemotingValue(
       kind: rvString,
       stringVal: LengthPrefixedString(value: "System.String, System.Int32")
     )
-
-    # Create a context and RemotingMessage
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[signatureValue])
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Deserialize the byte sequence
+    let expected: seq[byte] = @[
+      0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x15, 0x90, 0x00, 0x00, 0x00, 0x12, 0x0D, 0x47, 0x65, 0x6E, 0x65, 0x72, 0x69, 0x63, 0x4D, 0x65, 0x74, 0x68, 0x6F, 0x64,
+      0x12, 0x0E, 0x47, 0x65, 0x6E, 0x65, 0x72, 0x69, 0x63, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
+      0x07, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x12, 0x1B, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6D, 0x2E, 0x53, 0x74, 0x72, 0x69, 0x6E, 0x67, 0x2C, 0x20, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6D, 0x2E, 0x49, 0x6E, 0x74, 0x33, 0x32,
+      0x0B
+    ]
+    check serialized == expected
     let deserialized = deserializeRemotingMessage(serialized)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 1
     check deserialized.header.headerId == -1
     check deserialized.methodCall.isSome
@@ -481,35 +336,31 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with generic method":
-    # Create methodName and typeName
     let methodName = newStringValueWithCode("GetCollection")
     let typeName = newStringValueWithCode("CollectionService")
-
-    # Create BinaryMethodCall with GenericMethod and NoContext
     let binaryMethodCall = BinaryMethodCall(
       recordType: rtMethodCall,
-      messageEnum: {GenericMethod, NoContext},  # 16384 + 16 = 16400
+      messageEnum: {GenericMethod, NoContext},
       methodName: methodName,
       typeName: typeName
     )
-
-    # Create callArray with generic type argument as a string RemotingValue
     let typeArgValue = RemotingValue(
       kind: rvString,
       stringVal: LengthPrefixedString(value: "System.Int32")
     )
-
-    # Create a context and RemotingMessage
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[typeArgValue])
-
-    # Serialize the message
     let serialized = serializeRemotingMessage(msg, ctx)
-
-    # Deserialize the byte sequence
+    let expected: seq[byte] = @[
+      0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x15, 0x10, 0x40, 0x00, 0x00, 0x12, 0x0D, 0x47, 0x65, 0x74, 0x43, 0x6F, 0x6C, 0x6C, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E,
+      0x12, 0x11, 0x43, 0x6F, 0x6C, 0x6C, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65,
+      0x07, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x12, 0x0C, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6D, 0x2E, 0x49, 0x6E, 0x74, 0x33, 0x32,
+      0x0B
+    ]
+    check serialized == expected
     let deserialized = deserializeRemotingMessage(serialized)
-
-    # Verify deserialized message
     check deserialized.header.rootId == 1
     check deserialized.header.headerId == -1
     check deserialized.methodCall.isSome
