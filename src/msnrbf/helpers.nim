@@ -1,5 +1,5 @@
 import faststreams/[inputs, outputs]
-import options, unicode, sequtils, strutils
+import options, unicode, sequtils
 import enums, types, grammar
 import records/[arrays, class, member, methodinv]
 
@@ -212,7 +212,6 @@ proc deserializeRemotingMessage*(data: openArray[byte]): RemotingMessage =
   ## Deserialize bytes to RemotingMessage
   var input = memoryInput(data)
   return readRemotingMessage(input)
-
 
 #
 # Class construction helpers

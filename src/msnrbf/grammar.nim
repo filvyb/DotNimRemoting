@@ -15,6 +15,7 @@ type
     ## Represents a complete remoting message that follows MS-NRBF grammar
     ## This is a root object for a complete message exchange
     header*: SerializationHeaderRecord     # Required start header
+    libraries*: seq[BinaryLibrary]         # Binary libraries needed by the message
     methodCall*: Option[BinaryMethodCall]        # Required method call
     methodReturn*: Option[BinaryMethodReturn]    # Or method return
     methodCallArray*: seq[RemotingValue]   # Optional method call array
@@ -397,6 +398,11 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
     if nextType == rtMessageEnd:
       discard inp.read # Consume the record type
       result.tail = MessageEnd(recordType: rtMessageEnd)
+      
+      # Extract libraries from the context and add them to the message
+      for id, lib in ctx.libraries.pairs:
+        result.libraries.add(lib)
+      
       return
     # Read referenceable record
     result.referencedRecords.add(readReferenceable(inp, ctx))
@@ -497,6 +503,10 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   # Write the header with pre-set rootId
   writeSerializationHeader(outp, msg.header)
 
+  # Write all BinaryLibrary records
+  for lib in msg.libraries:
+    writeBinaryLibrary(outp, lib)
+
   # Write referenced records (e.g., classes, arrays, strings)
   for record in msg.referencedRecords:
     writeReferenceable(outp, record)
@@ -514,7 +524,8 @@ proc newRemotingMessage*(ctx: SerializationContext,
                         methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
                         callArray: seq[RemotingValue] = @[],
-                        refs: seq[ReferenceableRecord] = @[]): RemotingMessage =
+                        refs: seq[ReferenceableRecord] = @[],
+                        libraries: seq[BinaryLibrary] = @[]): RemotingMessage =
   ## Creates a new RemotingMessage, assigning IDs to referencedRecords using the context
   # Validate that exactly one of methodCall or methodReturn is provided
   if methodCall.isNone and methodReturn.isNone:
@@ -571,6 +582,7 @@ proc newRemotingMessage*(ctx: SerializationContext,
   # Construct and return the RemotingMessage
   result = RemotingMessage(
     header: header,
+    libraries: libraries,
     methodCall: methodCall,
     methodReturn: methodReturn,
     methodCallArray: callArray,
