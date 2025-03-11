@@ -4,6 +4,7 @@ import src/msnrbf/enums
 import src/msnrbf/types
 import src/msnrbf/records/methodinv
 import src/msnrbf/records/member
+import src/msnrbf/context
 import options
 
 let methodName = newStringValueWithCode("Foo")

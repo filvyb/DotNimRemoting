@@ -1,6 +1,6 @@
 import faststreams/[inputs, outputs]
 import options, unicode, sequtils
-import enums, types, grammar
+import enums, types, grammar, context
 import records/[arrays, class, member, methodinv]
 
 #

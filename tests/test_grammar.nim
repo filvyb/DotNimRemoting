@@ -5,6 +5,7 @@ import msnrbf/enums
 import msnrbf/types
 import msnrbf/records/methodinv
 import msnrbf/records/member
+import msnrbf/context
 import options
 
 suite "RemotingMessage serialization and deserialization":

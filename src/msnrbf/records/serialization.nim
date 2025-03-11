@@ -1,7 +1,6 @@
 import faststreams/[inputs, outputs]
 import ../enums
 import ../types
-#import class
 
 type
   SerializationHeaderRecord* = object

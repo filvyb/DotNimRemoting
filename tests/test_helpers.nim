@@ -1,7 +1,7 @@
 import unittest
 import faststreams/inputs
 import options
-import msnrbf/[enums, types, helpers, grammar]
+import msnrbf/[enums, types, helpers, grammar, context]
 import msnrbf/records/[arrays, class, member, methodinv, serialization]
 
 suite "MSNRBF Helpers":
