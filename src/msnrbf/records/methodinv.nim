@@ -1,6 +1,7 @@
 import faststreams/[inputs, outputs]
 import ../enums
 import ../types
+import ../context
 import member
 import class
 import arrays
@@ -271,8 +272,11 @@ proc writeBinaryMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn) =
   if MessageFlag.ArgsInline in ret.messageEnum:
     writeArrayOfValueWithCode(outp, ret.args)
 
-proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
-  ## Writes a RemotingValue to the output stream
+proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: SerializationContext) =
+  ## Writes a RemotingValue to the output stream.
+  ## Uses the SerializationContext to track previously serialized objects and write
+  ## MemberReference records instead of full records for objects that have been 
+  ## serialized before, improving space efficiency.
   case value.kind
   of rvPrimitive:
     writeMemberPrimitiveTyped(outp, MemberPrimitiveTyped(
@@ -280,12 +284,27 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
       value: value.primitiveVal
     ))
   of rvString:
-    let strRecord = BinaryObjectString(
-      recordType: rtBinaryObjectString,
-      objectId: 1, # Set a positive ID (will be overwritten by context if used with refs)
-      value: value.stringVal
-    )
-    writeBinaryObjectString(outp, strRecord)
+    let valuePtr = cast[pointer](addr value)
+    if ctx.hasWrittenObject(valuePtr):
+      # Object was previously serialized, write a reference instead
+      let id = ctx.getWrittenObjectId(valuePtr)
+      writeMemberReference(outp, MemberReference(
+        recordType: rtMemberReference,
+        idRef: id
+      ))
+    else:
+      # For compatibility with the tests, use ID 1 for string objects
+      # This matches the expected test outputs
+      let id = ctx.nextId
+      ctx.nextId += 1
+      ctx.setWrittenObjectId(valuePtr, id)
+      
+      let strRecord = BinaryObjectString(
+        recordType: rtBinaryObjectString,
+        objectId: id,
+        value: value.stringVal
+      )
+      writeBinaryObjectString(outp, strRecord)
   of rvNull:
     writeObjectNull(outp, ObjectNull(recordType: rtObjectNull))
   of rvReference:
@@ -294,56 +313,94 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue) =
       idRef: value.idRef
     ))
   of rvClass:
-    # First gather the member type information
-    var binaryTypes: seq[BinaryType] = @[]
-    var additionalInfos: seq[AdditionalTypeInfo] = @[]
-    
-    # Create type info for each member based on RemotingValue kind
-    for member in value.classVal.members:
-      case member.kind
-      of rvPrimitive:
-        binaryTypes.add(btPrimitive)
-        additionalInfos.add(AdditionalTypeInfo(
-          kind: btPrimitive, 
-          primitiveType: member.primitiveVal.kind
-        ))
-      of rvString:
-        binaryTypes.add(btString)
-        additionalInfos.add(AdditionalTypeInfo(kind: btString))
-      of rvNull:
-        binaryTypes.add(btObject)
-        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-      of rvReference:
-        binaryTypes.add(btObject)
-        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-      of rvClass, rvArray:
-        binaryTypes.add(btObject)
-        additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-    
-    let memberTypeInfo = MemberTypeInfo(
-      binaryTypes: binaryTypes,
-      additionalInfos: additionalInfos
-    )
-    
-    let classRecord = ClassWithMembersAndTypes(
-      recordType: rtClassWithMembersAndTypes,
-      classInfo: value.classVal.classInfo,
-      memberTypeInfo: memberTypeInfo,
-      libraryId: value.classVal.libraryId
-    )
-    writeClassWithMembersAndTypes(outp, classRecord)
-    
-    # Write the member values
-    for member in value.classVal.members:
-      writeRemotingValue(outp, member)
+    let classPtr = cast[pointer](addr value.classVal)
+    if ctx.hasWrittenObject(classPtr):
+      # Class was previously serialized, write a reference instead
+      let id = ctx.getWrittenObjectId(classPtr)
+      writeMemberReference(outp, MemberReference(
+        recordType: rtMemberReference,
+        idRef: id
+      ))
+    else:
+      # Assign a new ID and write the full class record
+      let id = ctx.nextId
+      ctx.nextId += 1
+      ctx.setWrittenObjectId(classPtr, id)
+      
+      # Create a copy of classInfo with the new objectId
+      var classInfo = value.classVal.classInfo
+      classInfo.objectId = id
+      
+      # First gather the member type information
+      var binaryTypes: seq[BinaryType] = @[]
+      var additionalInfos: seq[AdditionalTypeInfo] = @[]
+      
+      # Create type info for each member based on RemotingValue kind
+      for member in value.classVal.members:
+        case member.kind
+        of rvPrimitive:
+          binaryTypes.add(btPrimitive)
+          additionalInfos.add(AdditionalTypeInfo(
+            kind: btPrimitive, 
+            primitiveType: member.primitiveVal.kind
+          ))
+        of rvString:
+          binaryTypes.add(btString)
+          additionalInfos.add(AdditionalTypeInfo(kind: btString))
+        of rvNull:
+          binaryTypes.add(btObject)
+          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+        of rvReference:
+          binaryTypes.add(btObject)
+          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+        of rvClass, rvArray:
+          binaryTypes.add(btObject)
+          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
+      
+      let memberTypeInfo = MemberTypeInfo(
+        binaryTypes: binaryTypes,
+        additionalInfos: additionalInfos
+      )
+      
+      let classRecord = ClassWithMembersAndTypes(
+        recordType: rtClassWithMembersAndTypes,
+        classInfo: classInfo,  # Use the copy with updated objectId
+        memberTypeInfo: memberTypeInfo,
+        libraryId: value.classVal.libraryId
+      )
+      writeClassWithMembersAndTypes(outp, classRecord)
+      
+      # Write the member values
+      for member in value.classVal.members:
+        writeRemotingValue(outp, member, ctx)
   of rvArray:
-    let arrayRecord = ArraySingleObject(
-      recordType: rtArraySingleObject,
-      arrayInfo: value.arrayVal.arrayInfo
-    )
-    writeArraySingleObject(outp, arrayRecord)
-    for elem in value.arrayVal.elements:
-      writeRemotingValue(outp, elem)
+    let arrayPtr = cast[pointer](addr value.arrayVal)
+    if ctx.hasWrittenObject(arrayPtr):
+      # Array was previously serialized, write a reference instead
+      let id = ctx.getWrittenObjectId(arrayPtr)
+      writeMemberReference(outp, MemberReference(
+        recordType: rtMemberReference,
+        idRef: id
+      ))
+    else:
+      # Assign a new ID and write the full array record
+      let id = ctx.nextId
+      ctx.nextId += 1
+      ctx.setWrittenObjectId(arrayPtr, id)
+      
+      # Create a copy of arrayInfo with the new objectId
+      var arrayInfo = value.arrayVal.arrayInfo
+      arrayInfo.objectId = id  # Set the objectId
+      
+      let arrayRecord = ArraySingleObject(
+        recordType: rtArraySingleObject,
+        arrayInfo: arrayInfo  # Use the copy with updated objectId
+      )
+      writeArraySingleObject(outp, arrayRecord)
+      
+      # Write the array elements
+      for elem in value.arrayVal.elements:
+        writeRemotingValue(outp, elem, ctx)
 
 # String representation
 proc `$`*(valueWithCode: ValueWithCode): string =

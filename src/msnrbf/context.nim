@@ -96,13 +96,30 @@ type
     ## Manages object ID assignment during serialization, tracking records and IDs
     nextId*: int32                               # Counter for generating new IDs, starts at 1
     recordToId*: Table[ReferenceableRecord, int32]  # Maps records to their assigned IDs
+    writtenObjects*: Table[int, int32]  # Maps object memory addresses to their assigned IDs
 
 proc newSerializationContext*(): SerializationContext =
   ## Creates a new SerializationContext with an initial ID of 1
   SerializationContext(
     nextId: 1,
-    recordToId: initTable[ReferenceableRecord, int32]()
+    recordToId: initTable[ReferenceableRecord, int32](),
+    writtenObjects: initTable[int, int32]()
   )
+
+proc hasWrittenObject*(ctx: SerializationContext, obj: pointer): bool =
+  ## Check if an object pointer has been written before
+  let key = cast[int](obj)
+  return ctx.writtenObjects.hasKey(key)
+
+proc getWrittenObjectId*(ctx: SerializationContext, obj: pointer): int32 =
+  ## Get the ID for a previously written object pointer
+  let key = cast[int](obj)
+  return ctx.writtenObjects[key]
+
+proc setWrittenObjectId*(ctx: SerializationContext, obj: pointer, id: int32) =
+  ## Store an object pointer and its assigned ID
+  let key = cast[int](obj)
+  ctx.writtenObjects[key] = id
 
 proc assignId*(ctx: SerializationContext, record: ReferenceableRecord): int32 =
   ## Assigns a unique ID to a ReferenceableRecord and sets its inner objectId.

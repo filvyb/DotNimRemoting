@@ -321,7 +321,7 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
     
     # Serialize each element in the call array
     for value in array:
-      writeRemotingValue(outp, value)
+      writeRemotingValue(outp, value, ctx)
 
 proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], callArrayRecord: Option[ReferenceableRecord], ctx: SerializationContext) =
   ## Writes a BinaryMethodReturn record and its optional call array to the output stream
@@ -341,7 +341,7 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
     
     # Write each RemotingValue in the array
     for value in array:
-      writeRemotingValue(outp, value)
+      writeRemotingValue(outp, value, ctx)
 
 proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: SerializationContext) =
   ## Writes a complete remoting message, using the context for ID management.

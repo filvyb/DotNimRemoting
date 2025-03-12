@@ -196,7 +196,8 @@ proc createMethodReturnVoidMessage*(): RemotingMessage =
 #
 
 proc serializeRemotingMessage*(msg: RemotingMessage): seq[byte] =
-  ## Serialize a RemotingMessage to bytes using a new SerializationContext
+  ## Serialize a RemotingMessage to bytes using a new SerializationContext.
+  ## This uses a fresh context and is appropriate when no object reference tracking is needed.
   let ctx = newSerializationContext()
   var output = memoryOutput()
   writeRemotingMessage(output, msg, ctx)

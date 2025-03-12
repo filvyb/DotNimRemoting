@@ -1077,7 +1077,8 @@ suite "SerializationContext Tests":
     )
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, primValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, primValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1095,7 +1096,8 @@ suite "SerializationContext Tests":
     )
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, strValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, strValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1109,7 +1111,8 @@ suite "SerializationContext Tests":
     let nullValue = RemotingValue(kind: rvNull)
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, nullValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, nullValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1125,7 +1128,8 @@ suite "SerializationContext Tests":
     )
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, refValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, refValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1163,7 +1167,8 @@ suite "SerializationContext Tests":
     )
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, arrayValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, arrayValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1206,7 +1211,8 @@ suite "SerializationContext Tests":
     )
 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, arrayValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, arrayValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
@@ -1408,7 +1414,8 @@ suite "SerializationContext Tests":
     
     # Serialize directly 
     var outStream = memoryOutput()
-    writeRemotingValue(outStream, classValue)
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, classValue, ctx)
     let serialized = outStream.getOutput(seq[byte])
     
     # Deserialize directly
