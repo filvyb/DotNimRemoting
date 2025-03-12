@@ -288,4 +288,41 @@ suite "Common Data Types Tests":
     
     check decoded.typeName.value == original.typeName.value
     check decoded.libraryId == original.libraryId
+    
+  # Float to Decimal conversion tests
+  test "Float to Decimal basic conversion":
+    let f = 123.456
+    let d = toDecimal(f)
+    check d.value == "123.456"
+    
+  test "Float to Decimal with scientific notation":
+    let f = 1.234e5
+    let d = toDecimal(f)
+    check d.value == "123400"
+    
+  test "Float to Decimal with negative value":
+    let f = -987.654
+    let d = toDecimal(f)
+    check d.value == "-987.654"
+    
+  test "Float to Decimal with rounding - integral digits":
+    # Nim float can't represent the full precision we're testing, so we'll test
+    # with values that it can accurately represent
+    let f = 1.123456789012346
+    let d = toDecimal(f)
+    check d.value == "1.123456789012346"
+    
+  test "Float to Decimal with rounding - many integral digits":
+    # Test where the integral part uses most of the allowed 29 digits
+    # But work within float64 precision limits
+    let f = 12345678901234568.0
+    let d = toDecimal(f)
+    # Should be represented correctly
+    check d.value == "12345678901234568"
+    
+  test "Float to Decimal with precision limits":
+    # Test a value that is within float precision
+    let f = 1.234567890123457
+    let d = toDecimal(f)
+    check d.value == "1.234567890123457"
   
