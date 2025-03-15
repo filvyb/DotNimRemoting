@@ -1,6 +1,14 @@
 import faststreams/[inputs, outputs]
-import options
 from ../msnrbf/types import readValueWithContext, readValue, writeValue
+
+const 
+  # Protocol identifier for .NET Remoting, spelled "NET." in ASCII
+  ProtocolId* = 0x54454E2E
+  # Protocol version numbers
+  MajorVersion*: byte = 1
+  MinorVersion*: byte = 0
+  # Default binary format identifier
+  BinaryFormatId* = "application/octet-stream"
 
 type
   OperationType* = enum
@@ -166,12 +174,12 @@ proc readFrameHeader*(inp: InputStream): FrameHeader =
 proc readMessageFrame*(inp: InputStream): MessageFrame =
   ## Reads a MessageFrame from the input stream per section 2.2.3.3
   result.protocolId = readValue[int32](inp)
-  if result.protocolId != 0x54454E2E:
+  if result.protocolId != ProtocolId:
     raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
 
   result.majorVersion = inp.read
   result.minorVersion = inp.read
-  if result.majorVersion != 1 or result.minorVersion != 0:
+  if result.majorVersion != MajorVersion or result.minorVersion != MinorVersion:
     raise newException(IOError, "Unsupported version: " & $result.majorVersion & "." & $result.minorVersion)
 
   result.operationType = OperationType(readValue[uint16](inp))
@@ -228,9 +236,9 @@ proc writeFrameHeader*(outp: OutputStream, header: FrameHeader) =
 
 proc writeMessageFrame*(outp: OutputStream, frame: MessageFrame) =
   ## Writes a MessageFrame to the output stream per section 2.2.3.3
-  if frame.protocolId != 0x54454E2E:
+  if frame.protocolId != ProtocolId:
     raise newException(ValueError, "Protocol identifier must be 'NET.' (0x54454E2E)")
-  if frame.majorVersion != 1 or frame.minorVersion != 0:
+  if frame.majorVersion != MajorVersion or frame.minorVersion != MinorVersion:
     raise newException(ValueError, "Version must be 1.0")
 
   writeValue[int32](outp, frame.protocolId)
