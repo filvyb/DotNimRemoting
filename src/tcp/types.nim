@@ -139,36 +139,36 @@ proc readFrameHeader*(inp: InputStream): FrameHeader =
   of htCustom:
     let format1 = HeaderDataFormat(inp.read)
     if format1 != hdfCountedString:
-      raise newException(IOError, "Expected hdfCountedString for custom header name")
+      raise newException(ValueError, "Expected hdfCountedString for custom header name")
     result.headerName = readCountedString(inp)
     let format2 = HeaderDataFormat(inp.read)
     if format2 != hdfCountedString:
-      raise newException(IOError, "Expected hdfCountedString for custom header value")
+      raise newException(ValueError, "Expected hdfCountedString for custom header value")
     result.headerValue = readCountedString(inp)
   of htStatusCode:
     let format = HeaderDataFormat(inp.read)
     if format != hdfByte:
-      raise newException(IOError, "Expected hdfByte for status code")
+      raise newException(ValueError, "Expected hdfByte for status code")
     result.statusCode = TCPStatusCode(inp.read)
   of htStatusPhrase:
     let format = HeaderDataFormat(inp.read)
     if format != hdfCountedString:
-      raise newException(IOError, "Expected hdfCountedString for status phrase")
+      raise newException(ValueError, "Expected hdfCountedString for status phrase")
     result.statusPhrase = readCountedString(inp)
   of htRequestUri:
     let format = HeaderDataFormat(inp.read)
     if format != hdfCountedString:
-      raise newException(IOError, "Expected hdfCountedString for request URI")
+      raise newException(ValueError, "Expected hdfCountedString for request URI")
     result.requestUri = readCountedString(inp)
   of htCloseConnection:
     let format = HeaderDataFormat(inp.read)
     if format != hdfVoid:
-      raise newException(IOError, "Expected hdfVoid for close connection")
+      raise newException(ValueError, "Expected hdfVoid for close connection")
     # No data to read
   of htContentType:
     let format = HeaderDataFormat(inp.read)
     if format != hdfCountedString:
-      raise newException(IOError, "Expected hdfCountedString for content type")
+      raise newException(ValueError, "Expected hdfCountedString for content type")
     result.contentType = readCountedString(inp)
 
 proc readMessageFrame*(inp: InputStream): MessageFrame =
