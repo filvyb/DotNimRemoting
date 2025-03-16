@@ -1,3 +1,4 @@
+import faststreams/inputs
 import types
 
 proc newCountedString*(encoding: StringEncoding, value: string): CountedString =
@@ -42,3 +43,22 @@ proc createMessageFrame*(operationType: OperationType, requestUri: string,
     ),
     headers: headers
   )
+
+proc peekMessageFrame*(data: openArray[byte]): tuple[frame: MessageFrame, bytesRead: int] =
+  ## Attempts to parse a MessageFrame from the provided data without consuming it
+  ## Returns the parsed frame and the number of bytes read if successful
+  ## Raises IOError if there's not enough data
+  
+  var inp = memoryInput(data)
+  
+  # Save the current position
+  let startPos = inp.pos()
+  
+  # Try to parse the message frame
+  try:
+    let frame = readMessageFrame(inp)
+    let endPos = inp.pos()
+    return (frame, endPos - startPos)
+  except IOError:
+    # Not enough data or invalid format
+    raise

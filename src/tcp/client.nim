@@ -106,11 +106,10 @@ proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
     raise newException(IOError, "Not connected to server")
   
   var buffer = newSeq[byte]()
-  var messageFrame: MessageFrame
-  var frameEndPos = 0
+  var frameSize = 0
   var contentLength = 0
   
-  # Read the message frame
+  # Keep reading until we have a complete message frame
   while true:
     let data = await client.socket.recv(1024)
     if data.len == 0:
@@ -119,47 +118,41 @@ proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
     # Add received data to our buffer
     buffer.add(cast[seq[byte]](data))
     
-    # Try to parse the message frame from the accumulated data
-    var inp = memoryInput(buffer)
+    # Try to parse the message frame without consuming
     try:
-      messageFrame = readMessageFrame(inp)
-      frameEndPos = inp.pos()
+      let (frame, bytesRead) = peekMessageFrame(buffer)
+      
+      # Validate that this is a reply message
+      if frame.operationType != otReply:
+        raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
       
       # Extract content length
-      if messageFrame.contentLength.distribution == cdNotChunked:
-        contentLength = messageFrame.contentLength.length
+      if frame.contentLength.distribution == cdNotChunked:
+        contentLength = frame.contentLength.length
       else:
         raise newException(IOError, "Chunked encoding not supported yet")
       
-      # Validate that this is a reply message
-      if messageFrame.operationType != otReply:
-        raise newException(IOError, "Expected Reply operation type, got " & $messageFrame.operationType)
+      # Remember frame size for extracting content later
+      frameSize = bytesRead
       
       # We've successfully parsed the frame
       break
     except IOError:
-      # We don't have enough data yet, continue reading
+      # Not enough data yet, continue reading
       continue
   
   # Now we need to read the message content
-  # First check if we already have enough data
-  if buffer.len >= frameEndPos + contentLength:
-    # We already have all the content
-    return buffer[frameEndPos ..< frameEndPos + contentLength]
-  
-  # We need to read more data for the content
-  var contentBuffer = buffer[frameEndPos .. ^1]  # Start with what we already have
-  let remainingBytes = contentLength - contentBuffer.len
-  
-  while contentBuffer.len < contentLength:
-    let bytesToRead = min(1024, contentLength - contentBuffer.len)
+  # Keep reading until we have the complete content
+  while buffer.len < frameSize + contentLength:
+    let bytesToRead = min(1024, frameSize + contentLength - buffer.len)
     let data = await client.socket.recv(bytesToRead)
     if data.len == 0:
       raise newException(IOError, "Connection closed while reading content")
     
-    contentBuffer.add(cast[seq[byte]](data))
+    buffer.add(cast[seq[byte]](data))
   
-  return contentBuffer
+  # Extract just the content (without the frame)
+  return buffer[frameSize ..< frameSize + contentLength]
 
 proc invoke*(client: NrtpTcpClient, 
              methodName: string, 
