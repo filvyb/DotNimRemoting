@@ -35,144 +35,74 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   ## As specified in section 2.1.1.2.1 of MS-NRTP
   
   try:
-    # Read the fixed header portion (12 bytes)
-    var headerData = await client.recv(12)
-    if headerData.len < 12:
-      # Send a transport fault and close connection
-      var errorFrame = createMessageFrame(
-        operationType = otReply,
-        requestUri = "",
-        contentType = BinaryFormatId,
-        messageContent = @[],
-        closeConnection = true
-      )
-      errorFrame.headers.add(FrameHeader(token: htStatusCode, statusCode: tscError))
-      errorFrame.headers.add(FrameHeader(
-        token: htStatusPhrase, 
-        statusPhrase: CountedString(encoding: seUtf8, value: "Invalid message header")
-      ))
+    var buffer = newSeq[byte]()
+    var frameSize = 0
+    var contentLength = 0
+    var frame: MessageFrame
+    
+    # Keep reading until we have a complete message frame
+    while true:
+      let data = await client.recv(1024)
+      if data.len == 0:
+        # Client disconnected
+        return
       
-      var output = memoryOutput()
-      writeMessageFrame(output, errorFrame)
-      await client.send(cast[string](output.getOutput(seq[byte])))
-      return
+      # Add received data to our buffer
+      buffer.add(cast[seq[byte]](data))
+      
+      # Try to parse the message frame without consuming
+      try:
+        let result = peekMessageFrame(buffer)
+        frame = result.frame
+        frameSize = result.bytesRead
+        
+        # Validate operation type (should be Request or OneWayRequest)
+        if frame.operationType != otRequest and frame.operationType != otOneWayRequest:
+          raise newException(IOError, "Expected Request or OneWayRequest operation type")
+        
+        # Extract content length
+        if frame.contentLength.distribution == cdNotChunked:
+          contentLength = frame.contentLength.length
+        else:
+          raise newException(IOError, "Chunked encoding not supported yet")
+        
+        # We've successfully parsed the frame
+        break
+      except IOError:
+        # Not enough data yet, continue reading
+        continue
     
-    # Start parsing the header
-    var input = memoryInput(headerData)
-    let protocolId = readValue[int32](input)
-    if protocolId != ProtocolId:
-      raise newException(IOError, "Invalid protocol identifier")
-    
-    let majorVersion = input.read
-    let minorVersion = input.read
-    if majorVersion != MajorVersion or minorVersion != MinorVersion:
-      raise newException(IOError, "Unsupported protocol version")
-    
-    let opType = OperationType(readValue[uint16](input))
-    if opType != otRequest and opType != otOneWayRequest:
-      raise newException(IOError, "Expected Request or OneWayRequest operation type")
-    
-    let isOneWay = (opType == otOneWayRequest)
-    
-    let distribution = ContentDistribution(readValue[uint16](input))
-    var contentLength: int32 = 0
-    if distribution == cdNotChunked:
-      contentLength = readValue[int32](input)
-    else:
-      # Chunked content handling would be more complex
-      raise newException(IOError, "Chunked message content not supported yet")
-    
-    # Read all headers
+    # Get the request URI and content type from the frame headers
     var requestUri = ""
     var contentType = ""
     var closeConnection = false
     
-    var endHeaderFound = false
-    while not endHeaderFound:
-      var headerByte = await client.recv(1)
-      if headerByte.len == 0:
-        raise newException(IOError, "Connection closed while reading headers")
-      
-      let token = HeaderToken(byte(headerByte[0]))
-      if token == htEndHeaders:
-        endHeaderFound = true
-        break
-      
-      # Read the header based on its type
-      case token
+    for header in frame.headers:
+      case header.token
       of htRequestUri:
-        # Read format byte
-        let formatByte = await client.recv(1)
-        if byte(formatByte[0]) != byte(hdfCountedString):
-          raise newException(IOError, "Invalid header format for RequestUri")
-        
-        # Read the encoding byte
-        let encodingByte = await client.recv(1)
-        let encoding = StringEncoding(byte(encodingByte[0]))
-        
-        # Read the length (4 bytes)
-        let lengthBytes = await client.recv(4)
-        var lenInput = memoryInput(lengthBytes)
-        let strLength = readValue[int32](lenInput)
-        
-        # Read the string value
-        if strLength > 0:
-          let strValue = await client.recv(strLength)
-          requestUri = strValue
-      
+        requestUri = header.requestUri.value
       of htContentType:
-        # Similar processing for content type
-        # Read format byte
-        let formatByte = await client.recv(1)
-        if byte(formatByte[0]) != byte(hdfCountedString):
-          raise newException(IOError, "Invalid header format for ContentType")
-        
-        # Read the encoding byte
-        let encodingByte = await client.recv(1)
-        let encoding = StringEncoding(byte(encodingByte[0]))
-        
-        # Read the length (4 bytes)
-        let lengthBytes = await client.recv(4)
-        var lenInput = memoryInput(lengthBytes)
-        let strLength = readValue[int32](lenInput)
-        
-        # Read the string value
-        if strLength > 0:
-          let strValue = await client.recv(strLength)
-          contentType = strValue
-      
+        contentType = header.contentType.value
       of htCloseConnection:
-        # Read format byte
-        let formatByte = await client.recv(1)
-        if byte(formatByte[0]) != byte(hdfVoid):
-          raise newException(IOError, "Invalid header format for CloseConnection")
         closeConnection = true
-      
       else:
-        # Skip other headers
-        # This is a simplified implementation - in a real server we would need to
-        # properly read and process all header types
+        # Ignore other headers
         discard
     
-    # Now read the message content
-    var contentBuffer = newSeq[byte](contentLength)
-    var contentPos = 0
-    
-    while contentPos < contentLength:
-      let remaining = contentLength - contentPos
-      let chunk = await client.recv(remaining)
-      if chunk.len == 0:
+    # Now read the message content if not already complete
+    while buffer.len < frameSize + contentLength:
+      let bytesToRead = min(1024, frameSize + contentLength - buffer.len)
+      let data = await client.recv(bytesToRead)
+      if data.len == 0:
         raise newException(IOError, "Connection closed while reading content")
       
-      # Copy data into content buffer
-      for i in 0..<chunk.len:
-        contentBuffer[contentPos + i] = byte(chunk[i])
-      contentPos += chunk.len
+      buffer.add(cast[seq[byte]](data))
     
-    # Process the request
-    # Extract method name and type name from content
-    # This would normally come from the binary format, but for simplicity
-    # we'll just pass the raw content to the handler
+    # Extract just the content (without the frame)
+    let requestData = buffer[frameSize ..< frameSize + contentLength]
+    
+    # Determine if this is a one-way method
+    let isOneWay = (frame.operationType == otOneWayRequest)
     
     # Find the handler for this path
     if requestUri in server.handlers:
@@ -181,10 +111,10 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       # For one-way methods, no response is sent
       if isOneWay:
         # Process the request but don't wait for a response
-        discard handler(requestUri, "", "", contentBuffer)
+        discard handler(requestUri, "", "", requestData)
       else:
         # Process the request and send a response
-        let responseData = await handler(requestUri, "", "", contentBuffer)
+        let responseData = await handler(requestUri, "", "", requestData)
         
         # Create response frame
         let responseFrame = createMessageFrame(
@@ -223,6 +153,28 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   except Exception as e:
     # Handle any exceptions
     echo "Error processing client: ", e.msg
+    
+    # Try to send an error response if possible
+    try:
+      var errorFrame = createMessageFrame(
+        operationType = otReply,
+        requestUri = "",
+        contentType = BinaryFormatId,
+        messageContent = @[],
+        closeConnection = true
+      )
+      errorFrame.headers.add(FrameHeader(token: htStatusCode, statusCode: tscError))
+      errorFrame.headers.add(FrameHeader(
+        token: htStatusPhrase, 
+        statusPhrase: CountedString(encoding: seUtf8, value: e.msg)
+      ))
+      
+      var output = memoryOutput()
+      writeMessageFrame(output, errorFrame)
+      await client.send(cast[string](output.getOutput(seq[byte])))
+    except:
+      # Ignore errors in sending error response
+      discard
   
   finally:
     # Close the client connection
