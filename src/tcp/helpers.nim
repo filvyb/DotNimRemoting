@@ -1,6 +1,11 @@
 import faststreams/inputs
 import types
 
+# Define debug template for logging
+template debugLog*(msg: varargs[string, `$`]) =
+  when not defined(release) or not defined(danger):
+    echo msg
+
 proc newCountedString*(encoding: StringEncoding, value: string): CountedString =
   ## Create a new CountedString object
   result.encoding = encoding

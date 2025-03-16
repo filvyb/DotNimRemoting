@@ -128,7 +128,7 @@ proc readFrameHeader*(inp: InputStream): FrameHeader =
   let tokenByte = inp.read
 
   try:
-    result.token = HeaderToken(tokenByte)
+    result = FrameHeader(token: HeaderToken(tokenByte))
   except ValueError:
     raise newException(ValueError, "Invalid HeaderToken value")
 
