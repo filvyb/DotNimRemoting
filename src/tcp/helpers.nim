@@ -9,12 +9,12 @@ proc newCountedString*(encoding: StringEncoding, value: string): CountedString =
 proc newRequestUriHeader*(uri: string): FrameHeader =
   ## Create a new RequestUriHeader object
   result.token = htRequestUri
-  result.headerValue = newCountedString(seUTF8, uri)
+  result.requestUri = newCountedString(seUTF8, uri)
 
 proc newContentTypeHeader*(contentType: string): FrameHeader =
   ## Create a new ContentTypeHeader object
   result.token = htContentType
-  result.headerValue = newCountedString(seUTF8, contentType)
+  result.contentType = newCountedString(seUTF8, contentType)
 
 proc createMessageFrame*(operationType: OperationType, requestUri: string, 
                        contentType: string, messageContent: seq[byte],
