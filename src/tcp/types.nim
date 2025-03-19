@@ -1,4 +1,5 @@
 import faststreams/[inputs, outputs]
+import asyncnet, asyncdispatch
 from ../msnrbf/types import readValueWithContext, readValue, writeValue
 
 const 
@@ -115,11 +116,73 @@ proc readCountedString*(inp: InputStream): CountedString =
     if not inp.readInto(result.value.toOpenArrayByte(0, length-1)):
       raise newException(IOError, "Failed to read CountedString data")
 
+proc readCountedStringAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: CountedString, bytesRead: int]] {.async.} =
+  ## Read a CountedString from the async socket, returning the value and bytes read
+  var bytesRead = 0
+  
+  # Read encoding byte
+  var encodingF = socket.recv(1)
+  if not await withTimeout(encodingF, timeout):
+    raise newException(IOError, "Timeout while reading CountedString encoding")
+  let encodingData = await encodingF
+  bytesRead += 1
+  
+  result.value.encoding = StringEncoding(encodingData[0].byte)
+  
+  # Read length (4 bytes)
+  var lengthF = socket.recv(4)
+  if not await withTimeout(lengthF, timeout):
+    raise newException(IOError, "Timeout while reading CountedString length")
+  let lengthData = await lengthF
+  bytesRead += 4
+  
+  let length = cast[ptr int32](unsafeAddr lengthData[0])[]
+  if length < 0:
+    raise newException(ValueError, "Invalid CountedString length")
+  
+  if length == 0:
+    result.value.value = ""
+  else:
+    # Read string data
+    var stringF = socket.recv(length)
+    if not await withTimeout(stringF, timeout):
+      raise newException(IOError, "Timeout while reading CountedString data")
+    let stringData = await stringF
+    bytesRead += length
+    result.value.value = stringData
+  
+  result.bytesRead = bytesRead
+
 proc readContentLength*(inp: InputStream): ContentLength =
   ## Read a ContentLength from the input stream
   result.distribution = ContentDistribution(readValue[uint16](inp))
   if result.distribution == cdNotChunked:
     result.length = readValue[int32](inp)
+    
+proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: ContentLength, bytesRead: int]] {.async.} =
+  ## Read a ContentLength from the async socket, returning the value and bytes read
+  var bytesRead = 0
+  
+  # Read distribution (2 bytes)
+  var distributionF = socket.recv(2)
+  if not await withTimeout(distributionF, timeout):
+    raise newException(IOError, "Timeout while reading ContentDistribution")
+  let distributionData = await distributionF
+  bytesRead += 2
+  
+  result.value.distribution = ContentDistribution(cast[ptr uint16](unsafeAddr distributionData[0])[])
+  
+  if result.value.distribution == cdNotChunked:
+    # Read length (4 bytes)
+    var lengthF = socket.recv(4)
+    if not await withTimeout(lengthF, timeout):
+      raise newException(IOError, "Timeout while reading content length")
+    let lengthData = await lengthF
+    bytesRead += 4
+    
+    result.value.length = cast[ptr int32](unsafeAddr lengthData[0])[]
+  
+  result.bytesRead = bytesRead
 
 proc readFrameHeader*(inp: InputStream): FrameHeader =
   ## Reads a FrameHeader from the input stream per section 2.2.3.3.3
@@ -171,6 +234,143 @@ proc readFrameHeader*(inp: InputStream): FrameHeader =
       raise newException(ValueError, "Expected hdfCountedString for content type")
     result.contentType = readCountedString(inp)
 
+proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: FrameHeader, bytesRead: int]] {.async.} =
+  ## Reads a FrameHeader from the async socket, returning the value and bytes read
+  var bytesRead = 0
+  
+  # Read token byte
+  var tokenF = socket.recv(1)
+  if not await withTimeout(tokenF, timeout):
+    raise newException(IOError, "Timeout while reading FrameHeader token")
+  let tokenData = await tokenF
+  bytesRead += 1
+  
+  let tokenByte = tokenData[0].byte
+  
+  try:
+    result.value = FrameHeader(token: HeaderToken(tokenByte))
+  except ValueError:
+    raise newException(ValueError, "Invalid HeaderToken value: " & $tokenByte)
+  
+  case result.value.token
+  of htEndHeaders:
+    # No data follows
+    discard
+  of htCustom:
+    # Read format byte for header name
+    var format1F = socket.recv(1)
+    if not await withTimeout(format1F, timeout):
+      raise newException(IOError, "Timeout while reading custom header format")
+    let format1Data = await format1F
+    bytesRead += 1
+    
+    let format1 = HeaderDataFormat(format1Data[0].byte)
+    if format1 != hdfCountedString:
+      raise newException(ValueError, "Expected hdfCountedString for custom header name")
+    
+    let headerName = await readCountedStringAsync(socket, timeout)
+    result.value.headerName = headerName.value
+    bytesRead += headerName.bytesRead
+    
+    # Read format byte for header value
+    var format2F = socket.recv(1)
+    if not await withTimeout(format2F, timeout):
+      raise newException(IOError, "Timeout while reading custom header value format")
+    let format2Data = await format2F
+    bytesRead += 1
+    
+    let format2 = HeaderDataFormat(format2Data[0].byte)
+    if format2 != hdfCountedString:
+      raise newException(ValueError, "Expected hdfCountedString for custom header value")
+    
+    let headerValue = await readCountedStringAsync(socket, timeout)
+    result.value.headerValue = headerValue.value
+    bytesRead += headerValue.bytesRead
+  
+  of htStatusCode:
+    # Read format byte
+    var formatF = socket.recv(1)
+    if not await withTimeout(formatF, timeout):
+      raise newException(IOError, "Timeout while reading status code format")
+    let formatData = await formatF
+    bytesRead += 1
+    
+    let format = HeaderDataFormat(formatData[0].byte)
+    if format != hdfByte:
+      raise newException(ValueError, "Expected hdfByte for status code")
+    
+    # Read status code byte
+    var statusF = socket.recv(1)
+    if not await withTimeout(statusF, timeout):
+      raise newException(IOError, "Timeout while reading status code")
+    let statusData = await statusF
+    bytesRead += 1
+    
+    result.value.statusCode = TCPStatusCode(statusData[0].byte)
+  
+  of htStatusPhrase:
+    # Read format byte
+    var formatF = socket.recv(1)
+    if not await withTimeout(formatF, timeout):
+      raise newException(IOError, "Timeout while reading status phrase format")
+    let formatData = await formatF
+    bytesRead += 1
+    
+    let format = HeaderDataFormat(formatData[0].byte)
+    if format != hdfCountedString:
+      raise newException(ValueError, "Expected hdfCountedString for status phrase")
+    
+    let statusPhrase = await readCountedStringAsync(socket, timeout)
+    result.value.statusPhrase = statusPhrase.value
+    bytesRead += statusPhrase.bytesRead
+  
+  of htRequestUri:
+    # Read format byte
+    var formatF = socket.recv(1)
+    if not await withTimeout(formatF, timeout):
+      raise newException(IOError, "Timeout while reading request URI format")
+    let formatData = await formatF
+    bytesRead += 1
+    
+    let format = HeaderDataFormat(formatData[0].byte)
+    if format != hdfCountedString:
+      raise newException(ValueError, "Expected hdfCountedString for request URI")
+    
+    let requestUri = await readCountedStringAsync(socket, timeout)
+    result.value.requestUri = requestUri.value
+    bytesRead += requestUri.bytesRead
+  
+  of htCloseConnection:
+    # Read format byte
+    var formatF = socket.recv(1)
+    if not await withTimeout(formatF, timeout):
+      raise newException(IOError, "Timeout while reading close connection format")
+    let formatData = await formatF
+    bytesRead += 1
+    
+    let format = HeaderDataFormat(formatData[0].byte)
+    if format != hdfVoid:
+      raise newException(ValueError, "Expected hdfVoid for close connection")
+    # No data to read
+  
+  of htContentType:
+    # Read format byte
+    var formatF = socket.recv(1)
+    if not await withTimeout(formatF, timeout):
+      raise newException(IOError, "Timeout while reading content type format")
+    let formatData = await formatF
+    bytesRead += 1
+    
+    let format = HeaderDataFormat(formatData[0].byte)
+    if format != hdfCountedString:
+      raise newException(ValueError, "Expected hdfCountedString for content type")
+    
+    let contentType = await readCountedStringAsync(socket, timeout)
+    result.value.contentType = contentType.value
+    bytesRead += contentType.bytesRead
+  
+  result.bytesRead = bytesRead
+
 proc readMessageFrame*(inp: InputStream): MessageFrame =
   ## Reads a MessageFrame from the input stream per section 2.2.3.3
   result.protocolId = readValue[int32](inp)
@@ -191,6 +391,59 @@ proc readMessageFrame*(inp: InputStream): MessageFrame =
     if header.token == htEndHeaders:
       break
     result.headers.add(header)
+
+proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
+  ## Reads a MessageFrame from the async socket, returning the value and bytes read
+  var bytesRead = 0
+  
+  # Read protocol ID (4 bytes)
+  var protocolF = socket.recv(4)
+  if not await withTimeout(protocolF, timeout):
+    raise newException(IOError, "Timeout while reading protocol identifier")
+  let protocolData = await protocolF
+  bytesRead += 4
+  
+  result.value.protocolId = cast[ptr int32](unsafeAddr protocolData[0])[]
+  if result.value.protocolId != ProtocolId:
+    raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
+  
+  # Read major and minor version (1 byte each)
+  var versionF = socket.recv(2)
+  if not await withTimeout(versionF, timeout):
+    raise newException(IOError, "Timeout while reading version")
+  let versionData = await versionF
+  bytesRead += 2
+  
+  result.value.majorVersion = versionData[0].byte
+  result.value.minorVersion = versionData[1].byte
+  
+  if result.value.majorVersion != MajorVersion or result.value.minorVersion != MinorVersion:
+    raise newException(IOError, "Unsupported version: " & $result.value.majorVersion & "." & $result.value.minorVersion)
+  
+  # Read operation type (2 bytes)
+  var opTypeF = socket.recv(2)
+  if not await withTimeout(opTypeF, timeout):
+    raise newException(IOError, "Timeout while reading operation type")
+  let opTypeData = await opTypeF
+  bytesRead += 2
+  
+  result.value.operationType = OperationType(cast[ptr uint16](unsafeAddr opTypeData[0])[])
+  
+  # Read content length
+  let contentLength = await readContentLengthAsync(socket, timeout)
+  result.value.contentLength = contentLength.value
+  bytesRead += contentLength.bytesRead
+  
+  # Read headers until EndHeaders
+  while true:
+    let header = await readFrameHeaderAsync(socket, timeout)
+    bytesRead += header.bytesRead
+    
+    if header.value.token == htEndHeaders:
+      break
+    result.value.headers.add(header.value)
+  
+  result.bytesRead = bytesRead
 
 # Writing functions
 proc writeCountedString*(outp: OutputStream, cs: CountedString) =
