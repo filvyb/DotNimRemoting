@@ -119,77 +119,57 @@ proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
     debugLog "[CLIENT] Error: Not connected to server"
     raise newException(IOError, "Not connected to server")
   
-  var buffer = newSeq[byte]()
-  var frameSize = 0
-  var contentLength = 0
-  
   debugLog "[CLIENT] Reading message frame..."
-  # Keep reading until we have a complete message frame
-  while true:
-    var dataF = client.socket.recv(1024)
-    if not await withTimeout(dataF, client.timeout):
-      debugLog "[CLIENT] Error: Timeout while reading message frame"
-      raise newException(IOError, "Timeout while reading message frame")
-    var data = await dataF
-    if data.len == 0:
-      debugLog "[CLIENT] Error: Connection closed by peer"
-      raise newException(IOError, "Connection closed by peer")
-    
-    # Add received data to our buffer
-    buffer.add(cast[seq[byte]](data))
-    debugLog "[CLIENT] Received ", data.len, " bytes, buffer size now: ", buffer.len
-    
-    # Try to parse the message frame without consuming
-    try:
-      let result = peekMessageFrame(buffer)
-      let frame = result.frame
-      let bytesRead = result.bytesRead
-      
-      debugLog "[CLIENT] Successfully parsed message frame, size: ", bytesRead, " bytes"
-      
-      # Validate that this is a reply message
-      if frame.operationType != otReply:
-        debugLog "[CLIENT] Error: Expected Reply operation type, got ", frame.operationType
-        raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
-      
-      # Extract content length
-      if frame.contentLength.distribution == cdNotChunked:
-        contentLength = frame.contentLength.length
-        debugLog "[CLIENT] Content length: ", contentLength, " bytes"
-      else:
-        debugLog "[CLIENT] Error: Chunked encoding not supported yet"
-        raise newException(IOError, "Chunked encoding not supported yet")
-      
-      # Remember frame size for extracting content later
-      frameSize = bytesRead
-      
-      # We've successfully parsed the frame
-      break
-    except IOError as e:
-      # Not enough data yet, continue reading
-      debugLog "[CLIENT] Frame parsing incomplete, need more data: ", e.msg
-      continue
+  # Read message frame using the async API
+  let frameResult = await readMessageFrameAsync(client.socket, client.timeout)
+  let frame = frameResult.value
+  let frameSize = frameResult.bytesRead
+  
+  debugLog "[CLIENT] Successfully read message frame, size: ", frameSize, " bytes"
+  
+  # Validate that this is a reply message
+  if frame.operationType != otReply:
+    debugLog "[CLIENT] Error: Expected Reply operation type, got ", frame.operationType
+    raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
+  
+  # Extract content length
+  var contentLength = 0
+  if frame.contentLength.distribution == cdNotChunked:
+    contentLength = frame.contentLength.length
+    debugLog "[CLIENT] Content length: ", contentLength, " bytes"
+  else:
+    debugLog "[CLIENT] Error: Chunked encoding not supported yet"
+    raise newException(IOError, "Chunked encoding not supported yet")
   
   debugLog "[CLIENT] Frame parsed, reading content (",contentLength," bytes)..."
-  # Now we need to read the message content
-  # Keep reading until we have the complete content
-  while buffer.len < frameSize + contentLength:
-    let bytesToRead = min(1024, frameSize + contentLength - buffer.len)
-    debugLog "[CLIENT] Reading ", bytesToRead, " more bytes..."
-    let data = await client.socket.recv(bytesToRead)
+  # Read the message content
+  var content = newSeq[byte](contentLength)
+  var bytesRead = 0
+  
+  # Read in chunks until we have the complete content
+  while bytesRead < contentLength:
+    let chunkSize = min(1024, contentLength - bytesRead)
+    debugLog "[CLIENT] Reading chunk of ", chunkSize, " bytes..."
+    
+    var dataF = client.socket.recv(chunkSize)
+    if not await withTimeout(dataF, client.timeout):
+      debugLog "[CLIENT] Error: Timeout while reading content"
+      raise newException(IOError, "Timeout while reading content")
+    
+    let data = await dataF
     if data.len == 0:
       debugLog "[CLIENT] Error: Connection closed while reading content"
       raise newException(IOError, "Connection closed while reading content")
     
-    buffer.add(cast[seq[byte]](data))
-    debugLog "[CLIENT] Received ", data.len, " bytes, buffer size now: ", buffer.len
+    # Copy received data into our content buffer at the correct position
+    let dataBytes = cast[seq[byte]](data)
+    for i in 0..<data.len:
+      content[bytesRead + i] = dataBytes[i]
+    
+    bytesRead += data.len
+    debugLog "[CLIENT] Received chunk of ", data.len, " bytes, total read: ", bytesRead, "/", contentLength
   
-  debugLog "[CLIENT] Response fully received, total size: ", buffer.len, " bytes"
-  
-  # Extract just the content (without the frame)
-  let content = buffer[frameSize ..< frameSize + contentLength]
-  debugLog "[CLIENT] Extracted content length: ", content.len, " bytes"
-  
+  debugLog "[CLIENT] Response fully received, content size: ", content.len, " bytes"
   return content
 
 proc invoke*(client: NrtpTcpClient, 

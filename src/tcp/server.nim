@@ -37,51 +37,27 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   debugLog "[SERVER] New client connection accepted"
   
   try:
-    var buffer = newSeq[byte]()
-    var frameSize = 0
-    var contentLength = 0
-    var frame: MessageFrame
-    
     debugLog "[SERVER] Reading message frame..."
-    # Keep reading until we have a complete message frame
-    while true:
-      let data = await client.recv(1024)
-      if data.len == 0:
-        # Client disconnected
-        debugLog "[SERVER] Client disconnected before sending complete message"
-        return
-      
-      # Add received data to our buffer
-      buffer.add(cast[seq[byte]](data))
-      debugLog "[SERVER] Received ", data.len, " bytes, buffer size now: ", buffer.len, ", raw: ", data
-      
-      # Try to parse the message frame without consuming
-      try:
-        let result = peekMessageFrame(buffer)
-        frame = result.frame
-        frameSize = result.bytesRead
-        
-        debugLog "[SERVER] Successfully parsed message frame, size: ", frameSize, " bytes"
-        
-        # Validate operation type (should be Request or OneWayRequest)
-        if frame.operationType != otRequest and frame.operationType != otOneWayRequest:
-          debugLog "[SERVER] Error: Expected Request or OneWayRequest operation type, got ", frame.operationType
-          raise newException(IOError, "Expected Request or OneWayRequest operation type")
-        
-        # Extract content length
-        if frame.contentLength.distribution == cdNotChunked:
-          contentLength = frame.contentLength.length
-          debugLog "[SERVER] Content length: ", contentLength, " bytes"
-        else:
-          debugLog "[SERVER] Error: Chunked encoding not supported yet"
-          raise newException(IOError, "Chunked encoding not supported yet")
-        
-        # We've successfully parsed the frame
-        break
-      except IOError as e:
-        # Not enough data yet, continue reading
-        debugLog "[SERVER] Frame parsing incomplete, need more data: ", e.msg
-        continue
+    # Read the message frame using the async API
+    let frameResult = await readMessageFrameAsync(client)
+    let frame = frameResult.value
+    let frameSize = frameResult.bytesRead
+    
+    debugLog "[SERVER] Successfully read message frame, size: ", frameSize, " bytes"
+    
+    # Validate operation type (should be Request or OneWayRequest)
+    if frame.operationType != otRequest and frame.operationType != otOneWayRequest:
+      debugLog "[SERVER] Error: Expected Request or OneWayRequest operation type, got ", frame.operationType
+      raise newException(IOError, "Expected Request or OneWayRequest operation type")
+    
+    # Extract content length
+    var contentLength = 0
+    if frame.contentLength.distribution == cdNotChunked:
+      contentLength = frame.contentLength.length
+      debugLog "[SERVER] Content length: ", contentLength, " bytes"
+    else:
+      debugLog "[SERVER] Error: Chunked encoding not supported yet"
+      raise newException(IOError, "Chunked encoding not supported yet")
     
     debugLog "[SERVER] Message frame parsed, extracting headers..."
     # Get the request URI and content type from the frame headers
@@ -106,23 +82,33 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
         discard
     
     debugLog "[SERVER] Reading message content..."
-    # Now read the message content if not already complete
-    while buffer.len < frameSize + contentLength:
-      let bytesToRead = min(1024, frameSize + contentLength - buffer.len)
-      debugLog "[SERVER] Reading ", bytesToRead, " more bytes..."
-      let data = await client.recv(bytesToRead)
+    # Read the message content with proper timeout
+    var requestData = newSeq[byte](contentLength)
+    var bytesRead = 0
+    
+    # Read content in chunks
+    while bytesRead < contentLength:
+      let chunkSize = min(1024, contentLength - bytesRead)
+      debugLog "[SERVER] Reading chunk of ", chunkSize, " bytes..."
+      
+      var dataF = client.recv(chunkSize)
+      if not await withTimeout(dataF, 10000): # 10 second timeout
+        raise newException(IOError, "Timeout while reading content")
+      
+      let data = await dataF
       if data.len == 0:
         debugLog "[SERVER] Error: Connection closed while reading content"
         raise newException(IOError, "Connection closed while reading content")
       
-      buffer.add(cast[seq[byte]](data))
-      debugLog "[SERVER] Received ", data.len, " bytes, buffer size now: ", buffer.len
+      # Copy received data into our buffer at the correct position
+      let dataBytes = cast[seq[byte]](data)
+      for i in 0..<data.len:
+        requestData[bytesRead + i] = dataBytes[i]
+      
+      bytesRead += data.len
+      debugLog "[SERVER] Received chunk of ", data.len, " bytes, total read: ", bytesRead, "/", contentLength
     
-    debugLog "[SERVER] Message fully received, total size: ", buffer.len, " bytes"
-    
-    # Extract just the content (without the frame)
-    let requestData = buffer[frameSize ..< frameSize + contentLength]
-    debugLog "[SERVER] Extracted content length: ", requestData.len, " bytes"
+    debugLog "[SERVER] Message content fully received, total size: ", requestData.len, " bytes"
     
     # Determine if this is a one-way method
     let isOneWay = (frame.operationType == otOneWayRequest)
