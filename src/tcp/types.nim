@@ -10,6 +10,7 @@ const
   MinorVersion*: byte = 0
   # Default binary format identifier
   BinaryFormatId* = "application/octet-stream"
+  ChunkDelimiterBytes* = [byte 0x0D, 0x0A]
 
 type
   OperationType* = enum
@@ -94,6 +95,7 @@ type
     operationType*: OperationType    # Request/OneWayRequest/Reply
     contentLength*: ContentLength    # Length of message content
     headers*: seq[FrameHeader]       # Frame headers
+    messageContent*: seq[byte]        # Message content
 
 # Reading functions
 proc readCountedString*(inp: InputStream): CountedString =

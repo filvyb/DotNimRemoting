@@ -1,10 +1,7 @@
 import asyncnet, asyncdispatch
 import faststreams/[inputs, outputs]
-import ../tcp/[types, helpers]
+import types, helpers, common
 import strutils, uri
-
-const 
-  DefaultTimeout = 20000 # 20 seconds default timeout
 
 type
   NrtpTcpClient* = ref object

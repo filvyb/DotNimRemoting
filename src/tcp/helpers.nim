@@ -44,7 +44,8 @@ proc createMessageFrame*(operationType: OperationType, requestUri: string,
       distribution: cdNotChunked,
       length: messageContent.len.int32
     ),
-    headers: headers
+    headers: headers,
+    messageContent: messageContent
   )
 
 proc peekMessageFrame*(data: openArray[byte]): tuple[frame: MessageFrame, bytesRead: int] =
