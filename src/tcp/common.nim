@@ -9,6 +9,8 @@ const
 proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byte]] {.async.} =
   ## Reads chunked content from an async socket until a chunk size of 0 is encountered.
   ## Returns the complete message content as a sequence of bytes.
+  ## Follows MS-NRTP section 2.2.3.3.2 for chunked message content.
+  
   var content = newSeq[byte]()
   while true:
     # Read chunk size (4 bytes)
@@ -19,17 +21,22 @@ proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byt
     if sizeData.len != 4:
       raise newException(IOError, "Incomplete chunk size data")
     let chunkSize = cast[ptr int32](unsafeAddr sizeData[0])[]
+    
+    # Check for end of chunked content
     if chunkSize == 0:
-      # Read final delimiter
+      # Read final delimiter (2 bytes)
       var delimiterF = socket.recv(2)
       if not await withTimeout(delimiterF, timeout):
         raise newException(IOError, "Timeout while reading final chunk delimiter")
       let delimiter = await delimiterF
       if delimiter != "\r\n":
-        raise newException(IOError, "Invalid final chunk delimiter")
+        raise newException(IOError, "Invalid final chunk delimiter; expected '\\r\\n'")
       break
+    
+    # Validate chunk size
     if chunkSize < 0:
-      raise newException(ValueError, "Negative chunk size")
+      raise newException(ValueError, "Negative chunk size encountered")
+    
     # Read chunk data
     var chunkData = newSeq[byte](chunkSize)
     var bytesRead = 0
@@ -41,17 +48,22 @@ proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byt
       let data = await dataF
       if data.len == 0:
         raise newException(IOError, "Connection closed while reading chunk data")
+      let dataBytes = cast[seq[byte]](data)
       for i in 0..<data.len:
-        chunkData[bytesRead + i] = data[i].byte
+        chunkData[bytesRead + i] = dataBytes[i]
       bytesRead += data.len
+    
+    # Add chunk data to content
     content.add(chunkData)
-    # Read delimiter
+    
+    # Read delimiter (2 bytes)
     var delimiterF = socket.recv(2)
     if not await withTimeout(delimiterF, timeout):
       raise newException(IOError, "Timeout while reading chunk delimiter")
     let delimiter = await delimiterF
     if delimiter != "\r\n":
-      raise newException(IOError, "Invalid chunk delimiter")
+      raise newException(IOError, "Invalid chunk delimiter; expected '\\r\\n'")
+
   return content
 
 proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =

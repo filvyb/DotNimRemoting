@@ -1,6 +1,6 @@
 import asyncnet, asyncdispatch
 import faststreams/[inputs, outputs]
-import ../tcp/[types, helpers]
+import types, helpers, common
 import ../msnrbf/[types]
 import strutils, options, tables
 
