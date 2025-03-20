@@ -32,35 +32,27 @@ proc registerHandler*(server: NrtpTcpServer, path: string, handler: RequestHandl
 
 proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   ## Processes a client connection
-  ## As specified in section 2.1.1.2.1 of MS-NRTP
+  ## Follows MS-NRTP section 2.1.1.2.1
   
   debugLog "[SERVER] New client connection accepted"
   
   try:
     debugLog "[SERVER] Reading message frame..."
-    # Read the message frame using the async API
     let frameResult = await readMessageFrameAsync(client)
     let frame = frameResult.value
     let frameSize = frameResult.bytesRead
     
     debugLog "[SERVER] Successfully read message frame, size: ", frameSize, " bytes"
     
-    # Validate operation type (should be Request or OneWayRequest)
+    # Validate operation type
     if frame.operationType != otRequest and frame.operationType != otOneWayRequest:
-      debugLog "[SERVER] Error: Expected Request or OneWayRequest operation type, got ", frame.operationType
+      debugLog "[SERVER] Error: Expected Request or OneWayRequest, got ", frame.operationType
       raise newException(IOError, "Expected Request or OneWayRequest operation type")
     
-    # Extract content length
-    var contentLength = 0
-    if frame.contentLength.distribution == cdNotChunked:
-      contentLength = frame.contentLength.length
-      debugLog "[SERVER] Content length: ", contentLength, " bytes"
-    else:
-      debugLog "[SERVER] Error: Chunked encoding not supported yet"
-      raise newException(IOError, "Chunked encoding not supported yet")
-    
+    debugLog "[SERVER] Content length: ", frame.messageContent.len, " bytes"
     debugLog "[SERVER] Message frame parsed, extracting headers..."
-    # Get the request URI and content type from the frame headers
+    
+    # Extract headers
     var requestUri = ""
     var contentType = ""
     var closeConnection = false
@@ -77,60 +69,26 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
         closeConnection = true
         debugLog "[SERVER] CloseConnection header present"
       else:
-        # Ignore other headers
         debugLog "[SERVER] Other header token: ", header.token
         discard
     
-    debugLog "[SERVER] Reading message content..."
-    # Read the message content with proper timeout
-    var requestData = newSeq[byte](contentLength)
-    var bytesRead = 0
-    
-    # Read content in chunks
-    while bytesRead < contentLength:
-      let chunkSize = min(1024, contentLength - bytesRead)
-      debugLog "[SERVER] Reading chunk of ", chunkSize, " bytes..."
-      
-      var dataF = client.recv(chunkSize)
-      if not await withTimeout(dataF, 10000): # 10 second timeout
-        raise newException(IOError, "Timeout while reading content")
-      
-      let data = await dataF
-      if data.len == 0:
-        debugLog "[SERVER] Error: Connection closed while reading content"
-        raise newException(IOError, "Connection closed while reading content")
-      
-      # Copy received data into our buffer at the correct position
-      let dataBytes = cast[seq[byte]](data)
-      for i in 0..<data.len:
-        requestData[bytesRead + i] = dataBytes[i]
-      
-      bytesRead += data.len
-      debugLog "[SERVER] Received chunk of ", data.len, " bytes, total read: ", bytesRead, "/", contentLength
-    
-    debugLog "[SERVER] Message content fully received, total size: ", requestData.len, " bytes"
-    
-    # Determine if this is a one-way method
+    # Process request
     let isOneWay = (frame.operationType == otOneWayRequest)
     debugLog "[SERVER] Request type: ", if isOneWay: "OneWayRequest" else: "Request"
     
-    # Find the handler for this path
     if requestUri in server.handlers:
       debugLog "[SERVER] Handler found for URI: ", requestUri
       let handler = server.handlers[requestUri]
+      let requestData = frame.messageContent
       
-      # For one-way methods, no response is sent
       if isOneWay:
-        debugLog "[SERVER] Processing one-way request (no response will be sent)"
-        # Process the request but don't wait for a response
+        debugLog "[SERVER] Processing one-way request"
         discard handler(requestUri, "", "", requestData)
       else:
         debugLog "[SERVER] Processing request and preparing response"
-        # Process the request and send a response
         let responseData = await handler(requestUri, "", "", requestData)
         debugLog "[SERVER] Handler returned response data, length: ", responseData.len, " bytes"
         
-        # Create response frame
         let responseFrame = createMessageFrame(
           operationType = otReply,
           requestUri = requestUri,
@@ -140,22 +98,17 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
         )
         debugLog "[SERVER] Created response frame"
         
-        # Send the response
         var output = memoryOutput()
         writeMessageFrame(output, responseFrame)
-        debugLog "[SERVER] Serialized response frame"
-        
         for b in responseData:
           output.write(b)
         
         let responseBytes = output.getOutput(seq[byte])
         debugLog "[SERVER] Total response size: ", responseBytes.len, " bytes"
-        
         await client.send(cast[string](responseBytes))
         debugLog "[SERVER] Response sent"
     else:
       debugLog "[SERVER] No handler found for URI: ", requestUri
-      # No handler found, send a fault
       var errorFrame = createMessageFrame(
         operationType = otReply,
         requestUri = requestUri,
@@ -165,7 +118,7 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       )
       errorFrame.headers.add(FrameHeader(token: htStatusCode, statusCode: tscError))
       errorFrame.headers.add(FrameHeader(
-        token: htStatusPhrase, 
+        token: htStatusPhrase,
         statusPhrase: CountedString(encoding: seUtf8, value: "No handler found for URI")
       ))
       
@@ -175,8 +128,6 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       debugLog "[SERVER] Error response sent: No handler found for URI"
   
   except Exception as e:
-    # Handle any exceptions    
-    # Try to send an error response if possible
     try:
       var errorFrame = createMessageFrame(
         operationType = otReply,
@@ -187,7 +138,7 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       )
       errorFrame.headers.add(FrameHeader(token: htStatusCode, statusCode: tscError))
       errorFrame.headers.add(FrameHeader(
-        token: htStatusPhrase, 
+        token: htStatusPhrase,
         statusPhrase: CountedString(encoding: seUtf8, value: e.msg)
       ))
       
@@ -195,14 +146,12 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       writeMessageFrame(output, errorFrame)
       await client.send(cast[string](output.getOutput(seq[byte])))
       debugLog "[SERVER] Error response sent: ", e.msg
-      debugLog e.trace
+      debugLog e.getStackTrace()
     except:
-      # Ignore errors in sending error response
       debugLog "[SERVER] Failed to send error response"
       discard
   
   finally:
-    # Close the client connection
     client.close()
     debugLog "[SERVER] Client connection closed"
 

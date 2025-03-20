@@ -186,6 +186,66 @@ proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000): Future[
   
   result.bytesRead = bytesRead
 
+proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byte]] {.async.} =
+  ## Reads chunked content from an async socket until a chunk size of 0 is encountered.
+  ## Returns the complete message content as a sequence of bytes.
+  ## Follows MS-NRTP section 2.2.3.3.2 for chunked message content.
+  
+  var content = newSeq[byte]()
+  while true:
+    # Read chunk size (4 bytes)
+    var sizeF = socket.recv(4)
+    if not await withTimeout(sizeF, timeout):
+      raise newException(IOError, "Timeout while reading chunk size")
+    let sizeData = await sizeF
+    if sizeData.len != 4:
+      raise newException(IOError, "Incomplete chunk size data")
+    let chunkSize = cast[ptr int32](unsafeAddr sizeData[0])[]
+    
+    # Check for end of chunked content
+    if chunkSize == 0:
+      # Read final delimiter (2 bytes)
+      var delimiterF = socket.recv(2)
+      if not await withTimeout(delimiterF, timeout):
+        raise newException(IOError, "Timeout while reading final chunk delimiter")
+      let delimiter = await delimiterF
+      if delimiter != "\r\n":
+        raise newException(IOError, "Invalid final chunk delimiter; expected '\\r\\n'")
+      break
+    
+    # Validate chunk size
+    if chunkSize < 0:
+      raise newException(ValueError, "Negative chunk size encountered")
+    
+    # Read chunk data
+    var chunkData = newSeq[byte](chunkSize)
+    var bytesRead = 0
+    while bytesRead < chunkSize:
+      let remaining = chunkSize - bytesRead
+      var dataF = socket.recv(remaining)
+      if not await withTimeout(dataF, timeout):
+        raise newException(IOError, "Timeout while reading chunk data")
+      let data = await dataF
+      if data.len == 0:
+        raise newException(IOError, "Connection closed while reading chunk data")
+      let dataBytes = cast[seq[byte]](data)
+      for i in 0..<data.len:
+        chunkData[bytesRead + i] = dataBytes[i]
+      bytesRead += data.len
+    
+    # Add chunk data to content
+    content.add(chunkData)
+    
+    # Read delimiter (2 bytes)
+    var delimiterF = socket.recv(2)
+    if not await withTimeout(delimiterF, timeout):
+      raise newException(IOError, "Timeout while reading chunk delimiter")
+    let delimiter = await delimiterF
+    if delimiter != "\r\n":
+      raise newException(IOError, "Invalid chunk delimiter; expected '\\r\\n'")
+
+  return content
+
 proc readFrameHeader*(inp: InputStream): FrameHeader =
   ## Reads a FrameHeader from the input stream per section 2.2.3.3.3
   if not inp.readable:
@@ -395,56 +455,78 @@ proc readMessageFrame*(inp: InputStream): MessageFrame =
     result.headers.add(header)
 
 proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
-  ## Reads a MessageFrame from the async socket, returning the value and bytes read
+  ## Reads a MessageFrame from the async socket, including its content, returning the value and bytes read.
+  ## Follows MS-NRTP section 2.2.3.3 for message frame structure.
   var bytesRead = 0
+  var frame = MessageFrame()
   
   # Read protocol ID (4 bytes)
   var protocolF = socket.recv(4)
   if not await withTimeout(protocolF, timeout):
     raise newException(IOError, "Timeout while reading protocol identifier")
   let protocolData = await protocolF
-  bytesRead += 4
-  
-  result.value.protocolId = cast[ptr int32](unsafeAddr protocolData[0])[]
-  if result.value.protocolId != ProtocolId:
+  frame.protocolId = cast[ptr int32](unsafeAddr protocolData[0])[]
+  if frame.protocolId != ProtocolId:
     raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
+  bytesRead += 4
   
   # Read major and minor version (1 byte each)
   var versionF = socket.recv(2)
   if not await withTimeout(versionF, timeout):
     raise newException(IOError, "Timeout while reading version")
   let versionData = await versionF
+  frame.majorVersion = versionData[0].byte
+  frame.minorVersion = versionData[1].byte
+  if frame.majorVersion != MajorVersion or frame.minorVersion != MinorVersion:
+    raise newException(IOError, "Unsupported version: " & $frame.majorVersion & "." & $frame.minorVersion)
   bytesRead += 2
-  
-  result.value.majorVersion = versionData[0].byte
-  result.value.minorVersion = versionData[1].byte
-  
-  if result.value.majorVersion != MajorVersion or result.value.minorVersion != MinorVersion:
-    raise newException(IOError, "Unsupported version: " & $result.value.majorVersion & "." & $result.value.minorVersion)
   
   # Read operation type (2 bytes)
   var opTypeF = socket.recv(2)
   if not await withTimeout(opTypeF, timeout):
     raise newException(IOError, "Timeout while reading operation type")
   let opTypeData = await opTypeF
+  frame.operationType = OperationType(cast[ptr uint16](unsafeAddr opTypeData[0])[])
   bytesRead += 2
-  
-  result.value.operationType = OperationType(cast[ptr uint16](unsafeAddr opTypeData[0])[])
   
   # Read content length
   let contentLength = await readContentLengthAsync(socket, timeout)
-  result.value.contentLength = contentLength.value
+  frame.contentLength = contentLength.value
   bytesRead += contentLength.bytesRead
   
   # Read headers until EndHeaders
   while true:
     let header = await readFrameHeaderAsync(socket, timeout)
     bytesRead += header.bytesRead
-    
     if header.value.token == htEndHeaders:
       break
-    result.value.headers.add(header.value)
+    frame.headers.add(header.value)
   
+  # Read message content based on contentLength.distribution
+  if frame.contentLength.distribution == cdNotChunked:
+    let contentLength = frame.contentLength.length
+    frame.messageContent = newSeq[byte](contentLength)
+    var contentBytesRead = 0
+    while contentBytesRead < contentLength:
+      let chunkSize = min(1024, contentLength - contentBytesRead)
+      var dataF = socket.recv(chunkSize)
+      if not await withTimeout(dataF, timeout):
+        raise newException(IOError, "Timeout while reading content")
+      let data = await dataF
+      if data.len == 0:
+        raise newException(IOError, "Connection closed while reading content")
+      let dataBytes = cast[seq[byte]](data)
+      for i in 0..<data.len:
+        frame.messageContent[contentBytesRead + i] = dataBytes[i]
+      contentBytesRead += data.len
+    bytesRead += contentBytesRead
+  elif frame.contentLength.distribution == cdChunked:
+    frame.messageContent = await readChunkedContentAsync(socket, timeout)
+    # Note: bytesRead is not incremented here as we don't track exact bytes in chunked content
+  else:
+    raise newException(ValueError, "Unknown content distribution: " & $frame.contentLength.distribution)
+  
+  result.value = frame
   result.bytesRead = bytesRead
 
 # Writing functions
