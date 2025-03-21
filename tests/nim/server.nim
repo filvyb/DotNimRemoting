@@ -15,7 +15,7 @@ proc echoHandler(requestUri, methodName, typeName: string, requestData: seq[byte
   return createMethodReturnResponse()
 
 proc main() {.async.} =
-  let server = newNrtpTcpServer(8080)
+  let server = newNrtpTcpServer(8081)
   server.registerHandler("/EchoService", echoHandler)
   await server.start()
 

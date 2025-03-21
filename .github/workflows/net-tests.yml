@@ -19,10 +19,10 @@ jobs:
         dotnet-version: '3.x'
 
     - name: Build .NET Server
-      run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
+      run: dotnet build tests/dotnet/Server/Server.csproj /p:Configuration=Release
 
     - name: Build .NET Client
-      run: msbuild tests/dotnet/Client/Client.csproj /p:Configuration=Release
+      run: dotnet build tests/dotnet/Client/Client.csproj /p:Configuration=Release
 
     - name: Build Nim Client
       run: nimble c tests/nim/client.nim
