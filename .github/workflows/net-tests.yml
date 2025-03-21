@@ -16,7 +16,7 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '3.5'
+        dotnet-version: '3.x'
 
     - name: Build .NET Server
       run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
@@ -25,10 +25,10 @@ jobs:
       run: msbuild tests/dotnet/Client/Client.csproj /p:Configuration=Release
 
     - name: Build Nim Client
-      run: nimble c -d:release tests/nim/client.nim
+      run: nimble c tests/nim/client.nim
 
     - name: Build Nim Server
-      run: nimble c -d:release tests/nim/server.nim
+      run: nimble c tests/nim/server.nim
 
     - name: Test Nim Client with .NET Server
       shell: cmd
