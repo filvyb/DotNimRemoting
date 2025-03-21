@@ -14,15 +14,13 @@ jobs:
         nim-version: '2.2.2'
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '3.x'
+      uses: actions/setup-msbuild@v2
 
     - name: Build .NET Server
-      run: dotnet build tests/dotnet/Server/Server.csproj /p:Configuration=Release
+      run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
 
     - name: Build .NET Client
-      run: dotnet build tests/dotnet/Client/Client.csproj /p:Configuration=Release
+      run: msbuild tests/dotnet/Client/Client.csproj /p:Configuration=Release
 
     - name: Build Nim Client
       run: nimble c tests/nim/client.nim
