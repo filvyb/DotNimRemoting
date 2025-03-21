@@ -1,0 +1,49 @@
+name: Integration Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Nim
+      uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: '2.2.2'
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '3.5'
+
+    - name: Build .NET Server
+      run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
+
+    - name: Build .NET Client
+      run: msbuild tests/dotnet/Client/Client.csproj /p:Configuration=Release
+
+    - name: Build Nim Client
+      run: nimble c -d:release tests/nim/client.nim
+
+    - name: Build Nim Server
+      run: nimble c -d:release tests/nim/server.nim
+
+    - name: Test Nim Client with .NET Server
+      shell: cmd
+      run: |
+        start /B tests/dotnet/Server/bin/Release/Server.exe
+        timeout /t 5
+        tests/nim/client.exe
+        if %ERRORLEVEL% NEQ 0 exit /b 1
+        taskkill /F /IM Server.exe
+
+    - name: Test .NET Client with Nim Server
+      shell: cmd
+      run: |
+        start /B tests/nim/server.exe
+        timeout /t 5
+        dotnet/client/bin/Release/Client.exe tcp://localhost:8081/EchoService
+        if %ERRORLEVEL% NEQ 0 exit /b 1
+        taskkill /F /IM server.exe
