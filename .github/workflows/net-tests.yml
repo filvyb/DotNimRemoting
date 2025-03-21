@@ -14,7 +14,7 @@ jobs:
         nim-version: '2.2.2'
 
     - name: Setup .NET
-      uses: actions/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@v2
 
     - name: Build .NET Server
       run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
