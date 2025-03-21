@@ -29,19 +29,19 @@ jobs:
       run: nimble c tests/nim/server.nim
 
     - name: Test Nim Client with .NET Server
-      shell: cmd
+      shell: powershell
       run: |
-        start /B tests/dotnet/Server/bin/Release/Server.exe
-        timeout /t 5
-        tests/nim/client.exe
-        if %ERRORLEVEL% NEQ 0 exit /b 1
-        taskkill /F /IM Server.exe
+        Start-Process -NoNewWindow -FilePath "tests/dotnet/Server/bin/Release/Server.exe"
+        Start-Sleep -Seconds 5
+        & "tests/nim/client.exe"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Stop-Process -Name "Server" -Force
 
     - name: Test .NET Client with Nim Server
-      shell: cmd
+      shell: powershell
       run: |
-        start /B tests/nim/server.exe
-        timeout /t 5
-        dotnet/client/bin/Release/Client.exe tcp://localhost:8081/EchoService
-        if %ERRORLEVEL% NEQ 0 exit /b 1
-        taskkill /F /IM server.exe
+        Start-Process -NoNewWindow -FilePath "tests/nim/server.exe"
+        Start-Sleep -Seconds 5
+        & "tests/dotnet/Client/bin/Release/Client.exe" "tcp://localhost:8081/EchoService"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Stop-Process -Name "server" -Force
