@@ -1,8 +1,7 @@
 import asyncnet, asyncdispatch
 import faststreams/[inputs, outputs]
-import types, helpers, common
-import ../msnrbf/[types]
-import strutils, options, tables
+import types, helpers
+import strutils, tables
 
 type
   RequestHandler* = proc(requestUri: string, 

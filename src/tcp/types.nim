@@ -98,7 +98,7 @@ type
     messageContent*: seq[byte]        # Message content
 
 # Reading functions
-proc readCountedString*(inp: InputStream): CountedString =
+proc readCountedString*(inp: InputStream): CountedString {.deprecated.} =
   ## Read a CountedString from the input stream
   if not inp.readable:
     raise newException(IOError, "End of stream while reading CountedString")
@@ -155,7 +155,7 @@ proc readCountedStringAsync*(socket: AsyncSocket, timeout: int = 10000): Future[
   
   result.bytesRead = bytesRead
 
-proc readContentLength*(inp: InputStream): ContentLength =
+proc readContentLength*(inp: InputStream): ContentLength {.deprecated.} =
   ## Read a ContentLength from the input stream
   result.distribution = ContentDistribution(readValue[uint16](inp))
   if result.distribution == cdNotChunked:
@@ -246,7 +246,7 @@ proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byt
 
   return content
 
-proc readFrameHeader*(inp: InputStream): FrameHeader =
+proc readFrameHeader*(inp: InputStream): FrameHeader {.deprecated.} =
   ## Reads a FrameHeader from the input stream per section 2.2.3.3.3
   if not inp.readable:
     raise newException(IOError, "End of stream while reading FrameHeader")
@@ -433,7 +433,7 @@ proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tu
   
   result.bytesRead = bytesRead
 
-proc readMessageFrame*(inp: InputStream): MessageFrame =
+proc readMessageFrame*(inp: InputStream): MessageFrame {.deprecated.} =
   ## Reads a MessageFrame from the input stream per section 2.2.3.3
   result.protocolId = readValue[int32](inp)
   if result.protocolId != ProtocolId:
@@ -586,3 +586,14 @@ proc writeMessageFrame*(outp: OutputStream, frame: MessageFrame) =
   for header in frame.headers:
     writeFrameHeader(outp, header)
   outp.write(byte(htEndHeaders))
+  if frame.contentLength.distribution == cdNotChunked:
+    for b in frame.messageContent:
+      outp.write(b)
+  else: # cdChunked
+    #writeValue[int32](outp, int32(outp.messageContent.len))
+    for b in frame.messageContent:
+      writeValue[int32](outp, 1) # very bad, but not really needed
+      outp.write(b)
+      outp.write(ChunkDelimiterBytes)
+    writeValue[int32](outp, 0'i32)
+    outp.write(ChunkDelimiterBytes)

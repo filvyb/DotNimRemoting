@@ -21,7 +21,7 @@ proc newContentTypeHeader*(contentType: string): FrameHeader =
 
 proc createMessageFrame*(operationType: OperationType, requestUri: string, 
                        contentType: string, messageContent: seq[byte],
-                       closeConnection: bool = false): MessageFrame =
+                       closeConnection: bool = false, useChunked: bool = false): MessageFrame =
   ## Create a message frame as specified in section 2.2.3.3 of MS-NRTP
   
   # Create headers
@@ -40,10 +40,10 @@ proc createMessageFrame*(operationType: OperationType, requestUri: string,
     majorVersion: MajorVersion,
     minorVersion: MinorVersion,
     operationType: operationType,
-    contentLength: ContentLength(
-      distribution: cdNotChunked,
-      length: messageContent.len.int32
-    ),
+    contentLength: if useChunked:
+                     ContentLength(distribution: cdChunked)
+                   else:
+                     ContentLength(distribution: cdNotChunked, length: messageContent.len.int32),
     headers: headers,
     messageContent: messageContent
   )
