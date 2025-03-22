@@ -32,7 +32,7 @@ jobs:
       shell: powershell
       run: |
         Start-Process -NoNewWindow -FilePath "tests/dotnet/Server/bin/Release/Server.exe"
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 15
         & "tests/nim/client.exe"
         if ($LASTEXITCODE -ne 0) { exit 1 }
         Stop-Process -Name "Server" -Force
@@ -41,7 +41,7 @@ jobs:
       shell: powershell
       run: |
         Start-Process -NoNewWindow -FilePath "tests/nim/server.exe"
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 15
         & "tests/dotnet/Client/bin/Release/Client.exe" "tcp://localhost:8081/EchoService"
         if ($LASTEXITCODE -ne 0) { exit 1 }
         Stop-Process -Name "server" -Force
