@@ -301,18 +301,18 @@ proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tu
   var bytesRead = 0
   
   # Read token byte
-  var tokenF = socket.recv(1)
+  var tokenF = socket.recv(2)
   if not await withTimeout(tokenF, timeout):
     raise newException(IOError, "Timeout while reading FrameHeader token")
   let tokenData = await tokenF
-  bytesRead += 1
+  bytesRead += 2
   
-  let tokenByte = tokenData[0].byte
+  let tokenValue = cast[ptr uint16](unsafeAddr tokenData[0])[]
   
   try:
-    result.value = FrameHeader(token: HeaderToken(tokenByte))
+    result.value = FrameHeader(token: HeaderToken(tokenValue))
   except ValueError:
-    raise newException(ValueError, "Invalid HeaderToken value: " & $tokenByte)
+    raise newException(ValueError, "Invalid HeaderToken value: " & $tokenValue)
   
   case result.value.token
   of htEndHeaders:
@@ -546,7 +546,7 @@ proc writeContentLength*(outp: OutputStream, cl: ContentLength) =
 
 proc writeFrameHeader*(outp: OutputStream, header: FrameHeader) =
   ## Writes a FrameHeader to the output stream per section 2.2.3.3.3
-  outp.write(byte(header.token))
+  writeValue[uint16](outp, uint16(header.token))
   case header.token
   of htEndHeaders:
     # No data
