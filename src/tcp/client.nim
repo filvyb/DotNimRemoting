@@ -1,5 +1,5 @@
 import asyncnet, asyncdispatch
-import faststreams/[inputs, outputs]
+import faststreams/[outputs]
 import types, helpers, common
 import strutils, uri
 

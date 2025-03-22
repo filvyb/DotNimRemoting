@@ -1,7 +1,7 @@
 import asyncnet, asyncdispatch
-import faststreams/[inputs, outputs]
+import faststreams/[outputs]
 import types, helpers
-import strutils, tables
+import strutils, tables, uri
 
 type
   RequestHandler* = proc(requestUri: string, 
@@ -59,7 +59,7 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
     for header in frame.headers:
       case header.token
       of htRequestUri:
-        requestUri = header.requestUri.value
+        requestUri = parseUri(header.requestUri.value).path
         debugLog "[SERVER] RequestUri header: ", requestUri
       of htContentType:
         contentType = header.contentType.value
