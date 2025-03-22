@@ -76,7 +76,7 @@ proc sendRequest*(client: NrtpTcpClient,
   debugLog "[CLIENT] Operation type: ", opType
   
   # Get the server object URI path from the URI
-  let serverObjectUri = client.serverUri.path
+  let serverObjectUri = $client.serverUri
   if serverObjectUri == "":
     raise newException(ValueError, "Missing Server Object URI path")
   debugLog "[CLIENT] Server Object URI: ", serverObjectUri
@@ -93,10 +93,6 @@ proc sendRequest*(client: NrtpTcpClient,
   # Serialize frame to bytes
   var output = memoryOutput()
   writeMessageFrame(output, frame)
-  
-  # Add the message content after the frame
-  for b in messageContent:
-    output.write(b)
   
   # Get the complete message bytes
   let messageBytes = output.getOutput(seq[byte])

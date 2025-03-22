@@ -4,14 +4,15 @@ import ../../src/msnrbf/[helpers, grammar, enums]
 import asyncdispatch
 
 proc main() {.async.} =
+  let typename = "DotNimTester.Lib.IEchoService, Lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
   let client = newNrtpTcpClient("tcp://localhost:8080/EchoService")
   await client.connect()
   let requestData = createMethodCallRequest(
     methodName = "Echo",
-    typeName = "EchoService",
+    typeName = typename,
     args = @[stringValue("Hello from Nim")]
   )
-  let responseData = await client.invoke("Echo", "EchoService", false, requestData)
+  let responseData = await client.invoke("Echo", typename, false, requestData)
   # Parse response (simplified; assumes string return)
   var input = memoryInput(responseData)
   let msg = readRemotingMessage(input)
