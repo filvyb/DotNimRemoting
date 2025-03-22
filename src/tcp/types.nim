@@ -585,14 +585,13 @@ proc writeMessageFrame*(outp: OutputStream, frame: MessageFrame) =
   writeContentLength(outp, frame.contentLength)
   for header in frame.headers:
     writeFrameHeader(outp, header)
-  outp.write(byte(htEndHeaders))
+  writeValue[uint16](outp, uint16(htEndHeaders))
   if frame.contentLength.distribution == cdNotChunked:
     for b in frame.messageContent:
       outp.write(b)
   else: # cdChunked
-    #writeValue[int32](outp, int32(outp.messageContent.len))
     for b in frame.messageContent:
-      writeValue[int32](outp, 1) # very bad, but not really needed
+      writeValue[int32](outp, 1) # very bad, but done just so chunked content support is there
       outp.write(b)
       outp.write(ChunkDelimiterBytes)
     writeValue[int32](outp, 0'i32)
