@@ -8,46 +8,29 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Nim
-      uses: jiro4989/setup-nim-action@v2
-      with:
-        nim-version: '2.2.2'
+    - name: Setup Docker
+      uses: docker/setup-buildx-action@v3
 
-    - name: Setup .NET
-      uses: microsoft/setup-msbuild@v2
-
-    - name: Build .NET Server
-      run: msbuild tests/dotnet/Server/Server.csproj /p:Configuration=Release
-
-    - name: Build .NET Client
-      run: msbuild tests/dotnet/Client/Client.csproj /p:Configuration=Release
-
-    - name: Build Nim Client
-      run: nimble c tests/nim/client.nim
-
-    - name: Build Nim Server
-      run: nimble c tests/nim/server.nim
-    
-    - name: Allow Ports 8080/8081 Through Firewall
-      shell: powershell
+    - name: Build Docker Image
       run: |
-        New-NetFirewallRule -DisplayName "Allow Port 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
-        New-NetFirewallRule -DisplayName "Allow Port 8081" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow
+        docker build -t dotnet-nim-test -f tests/Dockerfile .
 
-    - name: Test Nim Client with .NET Server
-      shell: powershell
+    - name: Run Tests (Server: .NET, Client: Nim)
       run: |
-        Start-Process -NoNewWindow -FilePath "tests/dotnet/Server/bin/Release/Server.exe"
-        Start-Sleep -Seconds 15
-        & "tests/nim/client.exe"
-        if ($LASTEXITCODE -ne 0) { exit 1 }
-        Stop-Process -Name "Server" -Force
+        docker run --rm dotnet-nim-test powershell -Command "
+          Start-Process -NoNewWindow -FilePath 'C:/app/tests/dotnet/Server/bin/Release/Server.exe'
+          Start-Sleep -Seconds 5
+          & 'C:/app/tests/nim/client.exe'
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Stop-Process -Name 'Server' -Force
+        "
 
-    - name: Test .NET Client with Nim Server
-      shell: powershell
+    - name: Run Reverse Tests (Server: Nim, Client: .NET)
       run: |
-        Start-Process -NoNewWindow -FilePath "tests/nim/server.exe"
-        Start-Sleep -Seconds 15
-        & "tests/dotnet/Client/bin/Release/Client.exe" "tcp://127.0.0.1:8081/EchoService"
-        if ($LASTEXITCODE -ne 0) { exit 1 }
-        Stop-Process -Name "server" -Force
+        docker run --rm dotnet-nim-test powershell -Command "
+          Start-Process -NoNewWindow -FilePath 'C:/app/tests/nim/server.exe'
+          Start-Sleep -Seconds 5
+          & 'C:/app/tests/dotnet/Client/bin/Release/Client.exe' 'tcp://localhost:8081/EchoService'
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Stop-Process -Name 'server' -Force
+        "
