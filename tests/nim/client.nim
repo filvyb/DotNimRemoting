@@ -5,7 +5,7 @@ import asyncdispatch
 
 proc main() {.async.} =
   let typename = "DotNimTester.Lib.IEchoService, Lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
-  let client = newNrtpTcpClient("tcp://localhost:8080/EchoService")
+  let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
   await client.connect()
   let requestData = createMethodCallRequest(
     methodName = "Echo",

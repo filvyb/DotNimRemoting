@@ -19,7 +19,7 @@ namespace Server
             ChannelServices.RegisterChannel(channel, false);
             RemotingConfiguration.RegisterWellKnownServiceType(
                 typeof(EchoService), "EchoService", WellKnownObjectMode.Singleton);
-            Console.WriteLine("Server running on tcp://localhost:8080/EchoService");
+            Console.WriteLine("Server running on tcp://127.0.0.1:8080/EchoService");
             Console.ReadLine();
         }
     }
