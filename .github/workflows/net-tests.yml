@@ -15,21 +15,21 @@ jobs:
       run: |
         docker build -t dotnet-nim-test -f tests/Dockerfile .
 
-    - name: Run Tests (Server: .NET, Client: Nim)
+    - name: Run Tests
       run: |
         docker run --rm dotnet-nim-test powershell -Command "
           Start-Process -NoNewWindow -FilePath 'C:/app/tests/dotnet/Server/bin/Release/Server.exe'
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10
           & 'C:/app/tests/nim/client.exe'
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Stop-Process -Name 'Server' -Force
         "
 
-    - name: Run Reverse Tests (Server: Nim, Client: .NET)
+    - name: Run Reverse Tests
       run: |
         docker run --rm dotnet-nim-test powershell -Command "
           Start-Process -NoNewWindow -FilePath 'C:/app/tests/nim/server.exe'
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10
           & 'C:/app/tests/dotnet/Client/bin/Release/Client.exe' 'tcp://localhost:8081/EchoService'
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Stop-Process -Name 'server' -Force
