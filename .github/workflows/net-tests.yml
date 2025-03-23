@@ -11,9 +11,7 @@ jobs:
     - name: Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
-        driver: docker-container
-        driver-opts: |
-          image=mcr.microsoft.com/windows/servercore:ltsc2022
+        driver: docker
 
     - name: Build Docker Image
       run: |
