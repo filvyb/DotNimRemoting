@@ -27,6 +27,12 @@ jobs:
 
     - name: Build Nim Server
       run: nimble c tests/nim/server.nim
+    
+    - name: Allow Ports 8080/8081 Through Firewall
+      shell: powershell
+      run: |
+        New-NetFirewallRule -DisplayName "Allow Port 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+        New-NetFirewallRule -DisplayName "Allow Port 8081" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow
 
     - name: Test Nim Client with .NET Server
       shell: powershell
