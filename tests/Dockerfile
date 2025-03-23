@@ -1,5 +1,5 @@
 # Use a Windows Server Core image with .NET Framework 4.8
-FROM mcr.microsoft.com/dotnet/framework/runtime:4.8-windowsservercore-ltsc2022
+FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-ltsc2022
 
 # Install Nim (adjust the version and URL as needed)
 RUN powershell -Command "Invoke-WebRequest -Uri 'https://nim-lang.org/download/nim-2.2.2_x64.zip' -OutFile 'nim.zip'; Expand-Archive -Path 'nim.zip' -DestinationPath 'C:\nim'; Remove-Item 'nim.zip'"
