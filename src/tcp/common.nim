@@ -1,6 +1,7 @@
 import faststreams/[inputs]
 import ../msnrbf/[grammar, context, enums, types, helpers]
 import ../msnrbf/records/[methodinv, member]
+import strutils, strformat
 
 const 
   DefaultTimeout* = 20000 # 20 seconds default timeout
@@ -8,7 +9,13 @@ const
 proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
   ## Creates a binary-formatted method call request
   ## This will create a RemotingMessage with a BinaryMethodCall record
-  
+
+  let parts = typeName.split('.')
+  var fullTypeName: string
+  if parts.len >= 2:
+    let assemblyName = parts[1]
+    fullTypeName = fmt"{typeName}.{assemblyName}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+
   # Create serialization context
   let ctx = newSerializationContext()
   
