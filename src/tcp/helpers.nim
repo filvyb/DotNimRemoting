@@ -1,4 +1,3 @@
-import faststreams/inputs
 import types
 
 # Define debug template for logging

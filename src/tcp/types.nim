@@ -1,4 +1,4 @@
-import faststreams/[inputs, outputs]
+import faststreams/outputs
 import asyncnet, asyncdispatch
 from ../msnrbf/types import readValueWithContext, readValue, writeValue
 
