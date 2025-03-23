@@ -8,8 +8,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Docker
+    - name: Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker-container
+        driver-opts: |
+          image=mcr.microsoft.com/windows/servercore:ltsc2022
 
     - name: Build Docker Image
       run: |
