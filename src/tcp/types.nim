@@ -98,26 +98,6 @@ type
     messageContent*: seq[byte]        # Message content
 
 # Reading functions
-proc readCountedString*(inp: InputStream): CountedString {.deprecated.} =
-  ## Read a CountedString from the input stream
-  if not inp.readable:
-    raise newException(IOError, "End of stream while reading CountedString")
-
-  result.encoding = StringEncoding(inp.read)
-
-  let length = readValue[int32](inp)
-  if length < 0:
-    raise newException(ValueError, "Invalid CountedString length")
-
-  if length == 0:
-    result.value = ""
-  else:
-    if not inp.readable(length):
-      raise newException(IOError, "End of stream while reading CountedString data")
-    result.value = newString(length)
-    if not inp.readInto(result.value.toOpenArrayByte(0, length-1)):
-      raise newException(IOError, "Failed to read CountedString data")
-
 proc readCountedStringAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: CountedString, bytesRead: int]] {.async.} =
   ## Read a CountedString from the async socket, returning the value and bytes read
   var bytesRead = 0
@@ -155,11 +135,6 @@ proc readCountedStringAsync*(socket: AsyncSocket, timeout: int = 10000): Future[
   
   result.bytesRead = bytesRead
 
-proc readContentLength*(inp: InputStream): ContentLength {.deprecated.} =
-  ## Read a ContentLength from the input stream
-  result.distribution = ContentDistribution(readValue[uint16](inp))
-  if result.distribution == cdNotChunked:
-    result.length = readValue[int32](inp)
     
 proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: ContentLength, bytesRead: int]] {.async.} =
   ## Read a ContentLength from the async socket, returning the value and bytes read
@@ -246,55 +221,6 @@ proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byt
 
   return content
 
-proc readFrameHeader*(inp: InputStream): FrameHeader {.deprecated.} =
-  ## Reads a FrameHeader from the input stream per section 2.2.3.3.3
-  if not inp.readable:
-    raise newException(IOError, "End of stream while reading FrameHeader")
-  let tokenByte = inp.read
-
-  try:
-    result = FrameHeader(token: HeaderToken(tokenByte))
-  except ValueError:
-    raise newException(ValueError, "Invalid HeaderToken value")
-
-  case result.token
-  of htEndHeaders:
-    # No data follows
-    discard
-  of htCustom:
-    let format1 = HeaderDataFormat(inp.read)
-    if format1 != hdfCountedString:
-      raise newException(ValueError, "Expected hdfCountedString for custom header name")
-    result.headerName = readCountedString(inp)
-    let format2 = HeaderDataFormat(inp.read)
-    if format2 != hdfCountedString:
-      raise newException(ValueError, "Expected hdfCountedString for custom header value")
-    result.headerValue = readCountedString(inp)
-  of htStatusCode:
-    let format = HeaderDataFormat(inp.read)
-    if format != hdfByte:
-      raise newException(ValueError, "Expected hdfByte for status code")
-    result.statusCode = TCPStatusCode(inp.read)
-  of htStatusPhrase:
-    let format = HeaderDataFormat(inp.read)
-    if format != hdfCountedString:
-      raise newException(ValueError, "Expected hdfCountedString for status phrase")
-    result.statusPhrase = readCountedString(inp)
-  of htRequestUri:
-    let format = HeaderDataFormat(inp.read)
-    if format != hdfCountedString:
-      raise newException(ValueError, "Expected hdfCountedString for request URI")
-    result.requestUri = readCountedString(inp)
-  of htCloseConnection:
-    let format = HeaderDataFormat(inp.read)
-    if format != hdfVoid:
-      raise newException(ValueError, "Expected hdfVoid for close connection")
-    # No data to read
-  of htContentType:
-    let format = HeaderDataFormat(inp.read)
-    if format != hdfCountedString:
-      raise newException(ValueError, "Expected hdfCountedString for content type")
-    result.contentType = readCountedString(inp)
 
 proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: FrameHeader, bytesRead: int]] {.async.} =
   ## Reads a FrameHeader from the async socket, returning the value and bytes read
@@ -433,26 +359,6 @@ proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tu
   
   result.bytesRead = bytesRead
 
-proc readMessageFrame*(inp: InputStream): MessageFrame {.deprecated.} =
-  ## Reads a MessageFrame from the input stream per section 2.2.3.3
-  result.protocolId = readValue[int32](inp)
-  if result.protocolId != ProtocolId:
-    raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
-
-  result.majorVersion = inp.read
-  result.minorVersion = inp.read
-  if result.majorVersion != MajorVersion or result.minorVersion != MinorVersion:
-    raise newException(IOError, "Unsupported version: " & $result.majorVersion & "." & $result.minorVersion)
-
-  result.operationType = OperationType(readValue[uint16](inp))
-  result.contentLength = readContentLength(inp)
-
-  # Read headers until EndHeaders
-  while true:
-    let header = readFrameHeader(inp)
-    if header.token == htEndHeaders:
-      break
-    result.headers.add(header)
 
 proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
   ## Reads a MessageFrame from the async socket, including its content, returning the value and bytes read.
