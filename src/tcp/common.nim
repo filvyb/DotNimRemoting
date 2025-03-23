@@ -14,7 +14,7 @@ proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveV
   var fullTypeName: string
   if parts.len >= 2:
     let assemblyName = parts[1]
-    fullTypeName = fmt"{typeName}.{assemblyName}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+    fullTypeName = fmt"{typeName}, {assemblyName}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
 
   # Create serialization context
   let ctx = newSerializationContext()
