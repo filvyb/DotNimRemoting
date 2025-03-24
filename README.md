@@ -59,7 +59,7 @@ import DotNimRemoting/msnrbf/[helpers, grammar, enums]
 import asyncdispatch
 
 proc main() {.async.} =
-  let typename = "DotNimTester.Lib.IEchoService"
+  let typename = "DotNimTester.Lib.IEchoService, Lib"
   let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
   await client.connect()
   let requestData = createMethodCallRequest(
