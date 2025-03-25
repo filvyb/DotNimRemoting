@@ -136,6 +136,8 @@ proc readPrimitiveValue*(inp: InputStream, primitiveType: PrimitiveType): Primit
     result.decimalVal = readDecimal(inp)
   of ptString:
     result.stringVal = readLengthPrefixedString(inp)
+  of ptNull:
+    discard  # Null value, no data to read
   else:
     raise newException(IOError, "Invalid primitive type: " & $primitiveType)
 
@@ -246,6 +248,8 @@ proc writePrimitiveValue*(outp: OutputStream, value: PrimitiveValue) =
     writeDecimal(outp, value.decimalVal)
   of ptString:
     writeLengthPrefixedString(outp, value.stringVal.value)
+  of ptNull:
+    discard  # Null value, no data to write
   else:
     raise newException(ValueError, "Invalid primitive type: " & $value.kind)
 
