@@ -34,6 +34,10 @@ proc newNrtpTcpClient*(serverUri: string, timeout: int = DefaultTimeout): NrtpTc
     connected: false
   )
 
+proc setPath*(client: NrtpTcpClient, path: string) =
+  ## Changes the URI path used for requests
+  client.serverUri.path = path
+
 proc connect*(client: NrtpTcpClient): Future[void] {.async.} =
   ## Connects to the remote server
   ## As specified in section 2.1.1.1.1 of MS-NRTP
