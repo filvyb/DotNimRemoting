@@ -15,6 +15,10 @@ proc byteValue*(value: uint8): PrimitiveValue =
   ## Create a byte primitive value
   PrimitiveValue(kind: ptByte, byteVal: value)
 
+proc int16Value*(value: int16): PrimitiveValue =
+  ## Create an int16 primitive value
+  PrimitiveValue(kind: ptInt16, int16Val: value)
+
 proc int32Value*(value: int32): PrimitiveValue =
   ## Create an int32 primitive value
   PrimitiveValue(kind: ptInt32, int32Val: value)
@@ -22,6 +26,18 @@ proc int32Value*(value: int32): PrimitiveValue =
 proc int64Value*(value: int64): PrimitiveValue =
   ## Create an int64 primitive value
   PrimitiveValue(kind: ptInt64, int64Val: value)
+
+proc uint16Value*(value: uint16): PrimitiveValue =
+  ## Create a uint16 primitive value
+  PrimitiveValue(kind: ptUInt16, uint16Val: value)
+  
+proc uint32Value*(value: uint32): PrimitiveValue =
+  ## Create a uint32 primitive value
+  PrimitiveValue(kind: ptUInt32, uint32Val: value)
+
+proc uint64Value*(value: uint64): PrimitiveValue =
+  ## Create a uint64 primitive value
+  PrimitiveValue(kind: ptUInt64, uint64Val: value)
 
 proc doubleValue*(value: float64): PrimitiveValue =
   ## Create a double primitive value
