@@ -1,11 +1,7 @@
 import unittest
-import msnrbf/grammar
-import msnrbf/helpers
-import msnrbf/enums
-import msnrbf/types
-import msnrbf/records/methodinv
-import msnrbf/records/member
-import msnrbf/context
+import DotNimRemoting/msnrbf/[grammar, helpers]
+import DotNimRemoting/msnrbf/[enums, types, context]
+import DotNimRemoting/msnrbf/records/[methodinv, member]
 import options
 
 suite "RemotingMessage serialization and deserialization":

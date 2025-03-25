@@ -1,7 +1,7 @@
 import unittest
 import strutils
 import faststreams/[inputs, outputs]
-import msnrbf/types
+import DotNimRemoting/msnrbf/types
 
 suite "Common Data Types Tests":
   test "LengthPrefixedString decoding":

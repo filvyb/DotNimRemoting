@@ -1,6 +1,6 @@
 import unittest
 import faststreams/[inputs, outputs]
-import msnrbf/[enums, types, helpers, grammar, context, records/class, records/serialization, records/arrays, records/member, records/methodinv]
+import DotNimRemoting/msnrbf/[enums, types, helpers, grammar, context, records/class, records/serialization, records/arrays, records/member, records/methodinv]
 import options
 
 suite "Class Records Tests":

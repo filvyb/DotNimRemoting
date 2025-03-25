@@ -1,8 +1,8 @@
 import unittest
 import faststreams/inputs
 import options
-import msnrbf/[enums, types, helpers, grammar, context]
-import msnrbf/records/[arrays, class, member, methodinv, serialization]
+import DotNimRemoting/msnrbf/[enums, types, helpers, grammar, context]
+import DotNimRemoting/msnrbf/records/[arrays, class, member, methodinv, serialization]
 
 suite "MSNRBF Helpers":
   test "PrimitiveValue creation":
