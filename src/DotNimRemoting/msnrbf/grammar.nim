@@ -363,15 +363,16 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   for lib in msg.libraries:
     writeBinaryLibrary(outp, lib)
 
-  # Write referenced records (e.g., classes, arrays, strings)
-  for record in msg.referencedRecords:
-    writeReferenceable(outp, record)
 
   # Write method call or method return, including the call array if present
   if msg.methodCall.isSome:
     writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray, msg.callArrayRecord, ctx)
   elif msg.methodReturn.isSome:
     writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, msg.callArrayRecord, ctx)
+  
+  # Write referenced records (e.g., classes, arrays, strings)
+  for record in msg.referencedRecords:
+    writeReferenceable(outp, record)
 
   # Write the message end
   writeMessageEnd(outp, msg.tail)
