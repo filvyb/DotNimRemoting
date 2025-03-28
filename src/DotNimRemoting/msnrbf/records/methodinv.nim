@@ -182,6 +182,32 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     ))
     for i in 0..<classRecord.classInfo.memberCount:
       result.classVal.members.add(readRemotingValue(inp))
+  of rtArraySinglePrimitive:
+    # Read ArraySinglePrimitive record (Section 2.4.3.3)
+    let arrayRecord = readArraySinglePrimitive(inp)
+    let primitiveType = arrayRecord.primitiveType  # Type of all elements
+    let length = arrayRecord.arrayInfo.length              # Number of elements to read
+    var elements = newSeq[RemotingValue]()    # Initialize empty sequence
+
+    for i in 0..<length:
+      let value = readMemberPrimitiveUnTyped(inp, primitiveType)
+      let rv = RemotingValue(kind: rvPrimitive, primitiveVal: value.value)
+      elements.add(rv)
+
+    # Construct array result
+    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(arrayInfo: arrayRecord.arrayInfo, elements: elements))
+  of rtArraySingleString:
+    let arrayRecord = readArraySingleString(inp)
+    let length = arrayRecord.arrayInfo.length
+    var elements = newSeq[RemotingValue]()    # Initialize empty sequence
+    
+    for i in 0..<length:
+      let value = readLengthPrefixedString(inp)
+      let rv = RemotingValue(kind: rvString, stringVal: value)
+      elements.add(rv)
+
+    # Construct array result
+    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(arrayInfo: arrayRecord.arrayInfo, elements: elements))
   of rtArraySingleObject:
     let arrayRecord = readArraySingleObject(inp)
     result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
