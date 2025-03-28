@@ -5,7 +5,7 @@ import ../context
 import member
 import class
 import arrays
-import strutils
+import strutils, sequtils
 
 type
   ValueWithCode* = object
@@ -200,7 +200,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     let arrayRecord = readArraySingleString(inp)
     let length = arrayRecord.arrayInfo.length
     var elements = newSeq[RemotingValue]()    # Initialize empty sequence
-    
+
     for i in 0..<length:
       let value = readLengthPrefixedString(inp)
       let rv = RemotingValue(kind: rvString, stringVal: value)
@@ -235,6 +235,55 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       else:
         result.arrayVal.elements.add(readRemotingValue(inp))
         count += 1
+  of rtBinaryArray:
+    # Read the BinaryArray record metadata
+    let arrayRecord = readBinaryArray(inp)
+    
+    # Compute total number of elements as product of lengths
+    let totalElements = arrayRecord.lengths.foldl(a * b, 1'i32)
+    if totalElements < 0:
+      raise newException(IOError, "Total elements cannot be negative")
+    
+    var elements: seq[RemotingValue] = @[]
+    
+    # Check if elements are primitives for optimized reading
+    if arrayRecord.typeEnum == btPrimitive:
+      let primType = arrayRecord.additionalTypeInfo.primitiveType
+      for i in 0..<totalElements:
+        let value = readMemberPrimitiveUnTyped(inp, primType)
+        elements.add(RemotingValue(kind: rvPrimitive, primitiveVal: value.value))
+    else:
+      # General case: elements can be any memberReference, including nulls
+      var count = 0
+      while count < totalElements:
+        let nextType = peekRecordType(inp)
+        if nextType == rtObjectNullMultiple:
+          let nullRecord = readObjectNullMultiple(inp)
+          let nullsToAdd = min(nullRecord.nullCount, totalElements - count)
+          for i in 0..<nullsToAdd:
+            elements.add(RemotingValue(kind: rvNull))
+          count += nullsToAdd
+        elif nextType == rtObjectNullMultiple256:
+          let nullRecord = readObjectNullMultiple256(inp)
+          let nullsToAdd = min(nullRecord.nullCount.int32, totalElements - count)
+          for i in 0..<nullsToAdd:
+            elements.add(RemotingValue(kind: rvNull))
+          count += nullsToAdd
+        else:
+          elements.add(readRemotingValue(inp))
+          count += 1
+    
+    # Construct the result
+    result = RemotingValue(
+      kind: rvArray,
+      arrayVal: ArrayValue(
+        arrayInfo: ArrayInfo(
+          objectId: arrayRecord.objectId,
+          length: totalElements
+        ),
+        elements: elements
+      )
+    )
   else:
     raise newException(IOError, "Unsupported record type for RemotingValue: " & $recordType)
 
