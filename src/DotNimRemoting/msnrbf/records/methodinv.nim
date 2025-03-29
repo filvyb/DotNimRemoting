@@ -76,6 +76,129 @@ proc newStringValueWithCode*(value: string): StringValueWithCode =
   let strVal = PrimitiveValue(kind: ptString, stringVal: LengthPrefixedString(value: value))
   result = StringValueWithCode(primitiveType: ptString, value: strVal)
 
+proc determineMemberTypeInfo*(members: seq[RemotingValue]): MemberTypeInfo =
+  ## Dynamically determines the MemberTypeInfo based on a sequence of RemotingValues.
+  ## This is used during serialization of ClassWithMembersAndTypes records.
+  ## Raises ValueError for invalid member types (e.g., Primitive Null/String).
+
+  var binaryTypes: seq[BinaryType] = @[]
+  var additionalInfos: seq[AdditionalTypeInfo] = @[]
+
+  for member in members:
+    # Determine BinaryType and AdditionalInfo based on member's RemotingValue kind
+    case member.kind
+    of rvPrimitive:
+      let primType = member.primitiveVal.kind
+      if primType in {ptString, ptNull, ptUnused}: # Validation (Section 2.3.1.2)
+         raise newException(ValueError, "Invalid primitive type for class member: " & $primType)
+      binaryTypes.add(btPrimitive)
+      # PrimitiveTypeEnum needed (Section 2.3.1.2)
+      additionalInfos.add(AdditionalTypeInfo(
+        kind: btPrimitive,
+        primitiveType: primType
+      ))
+    of rvString:
+      binaryTypes.add(btString)
+      additionalInfos.add(AdditionalTypeInfo(kind: btString)) # No extra info needed
+    of rvNull:
+      # Nulls are generally represented as 'Object' type in metadata
+      binaryTypes.add(btObject)
+      additionalInfos.add(AdditionalTypeInfo(kind: btObject)) # No extra info needed
+    of rvReference:
+      # References imply the target type, often represented as 'Object' if unknown
+      binaryTypes.add(btObject)
+      additionalInfos.add(AdditionalTypeInfo(kind: btObject)) # No extra info needed
+    of rvClass:
+      # Need ClassTypeInfo (name, libraryId) or just name for SystemClass (Section 2.3.1.2)
+      let classRec = member.classVal.record
+      var className: LengthPrefixedString
+      var libraryId: int32 = 0
+      var isSystemClass = false
+
+      case classRec.kind
+      of rtClassWithId:
+         # Cannot reliably determine full type info from ClassWithId alone during serialization build phase.
+         # The caller constructing the RemotingValue should ideally provide a more complete record type
+         # if this member's type needs to be included in MemberTypeInfo.
+         raise newException(ValueError, "Cannot determine MemberTypeInfo for a ClassWithId member.")
+      of rtSystemClassWithMembers:
+         className = classRec.systemClassWithMembers.classInfo.name
+         isSystemClass = true
+      of rtClassWithMembers:
+         className = classRec.classWithMembers.classInfo.name
+         libraryId = classRec.classWithMembers.libraryId
+      of rtSystemClassWithMembersAndTypes:
+         className = classRec.systemClassWithMembersAndTypes.classInfo.name
+         isSystemClass = true
+      of rtClassWithMembersAndTypes:
+         className = classRec.classWithMembersAndTypes.classInfo.name
+         libraryId = classRec.classWithMembersAndTypes.libraryId
+      else:
+         raise newException(ValueError, "Unexpected class record kind for member type determination: " & $classRec.kind)
+
+      if isSystemClass:
+        binaryTypes.add(btSystemClass)
+        additionalInfos.add(AdditionalTypeInfo(kind: btSystemClass, className: className))
+      else:
+        binaryTypes.add(btClass)
+        additionalInfos.add(AdditionalTypeInfo(kind: btClass, classInfo: ClassTypeInfo(typeName: className, libraryId: libraryId)))
+
+    of rvArray:
+      # Arrays are generally represented as 'Object' unless specific (StringArray, etc.)
+      let arrayRec = member.arrayVal.record
+      case arrayRec.kind:
+        of rtArraySingleString: binaryTypes.add(btStringArray)
+        of rtArraySingleObject: binaryTypes.add(btObjectArray)
+        of rtArraySinglePrimitive: binaryTypes.add(btPrimitiveArray)
+        of rtBinaryArray:
+          # Use the type info from the BinaryArray record itself (Section 2.4.3.1 TypeEnum)
+          case arrayRec.binaryArray.typeEnum
+          of btPrimitive: binaryTypes.add(btPrimitiveArray)
+          of btString: binaryTypes.add(btStringArray)
+          of btObject: binaryTypes.add(btObjectArray)
+          of btSystemClass: binaryTypes.add(btSystemClass) # Representing array of system class
+          of btClass: binaryTypes.add(btClass) # Representing array of class
+          of btObjectArray: binaryTypes.add(btObjectArray) # Array of array of object
+          of btStringArray: binaryTypes.add(btStringArray) # Array of array of string
+          of btPrimitiveArray: binaryTypes.add(btPrimitiveArray) # Array of array of primitive
+        else: binaryTypes.add(btObject) # Default fallback for unknown/unexpected array types
+
+      # Add corresponding additional info if needed (Section 2.3.1.2)
+      case binaryTypes[^1] # Check the type we just added
+      of btPrimitiveArray:
+         let primType = if arrayRec.kind == rtArraySinglePrimitive: arrayRec.arraySinglePrimitive.primitiveType
+                        elif arrayRec.kind == rtBinaryArray: arrayRec.binaryArray.additionalTypeInfo.primitiveType
+                        else: raise newException(ValueError, "Cannot determine primitive type for array member") # Should not happen
+         if primType in {ptString, ptNull, ptUnused}: # Validation
+            raise newException(ValueError, "Invalid primitive type for array member: " & $primType)
+         additionalInfos.add(AdditionalTypeInfo(kind: btPrimitiveArray, primitiveType: primType))
+      of btSystemClass:
+         # Assuming BinaryArray of SystemClass
+         if arrayRec.kind != rtBinaryArray or arrayRec.binaryArray.typeEnum != btSystemClass:
+            raise newException(ValueError, "Inconsistent state determining SystemClass array member type")
+         let className = arrayRec.binaryArray.additionalTypeInfo.className
+         additionalInfos.add(AdditionalTypeInfo(kind: btSystemClass, className: className))
+      of btClass:
+         # Assuming BinaryArray of Class
+         if arrayRec.kind != rtBinaryArray or arrayRec.binaryArray.typeEnum != btClass:
+            raise newException(ValueError, "Inconsistent state determining Class array member type")
+         let classInfo = arrayRec.binaryArray.additionalTypeInfo.classInfo
+         additionalInfos.add(AdditionalTypeInfo(kind: btClass, classInfo: classInfo))
+      else:
+         # No additional info needed for btString, btObject, btObjectArray, btStringArray
+         additionalInfos.add(AdditionalTypeInfo(kind: binaryTypes[^1]))
+
+  # Construct the final MemberTypeInfo
+  result = MemberTypeInfo(
+    binaryTypes: binaryTypes,
+    additionalInfos: additionalInfos
+  )
+
+  # Final validation
+  if result.binaryTypes.len != members.len or result.additionalInfos.len != members.len:
+     raise newException(ValueError, "Internal error: MemberTypeInfo size mismatch after determination")
+
+
 # Reading procedures
 proc readValueWithCode*(inp: InputStream): ValueWithCode =
   ## Reads ValueWithCode structure from stream
@@ -189,7 +312,6 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
   of rtArraySinglePrimitive:
     # Read ArraySinglePrimitive record (Section 2.4.3.3)
     let arrayRecord = readArraySinglePrimitive(inp)
-    let primitiveType = arrayRecord.primitiveType  # Type of all elements
     let length = arrayRecord.arrayInfo.length     # Number of elements to read
     var elements = newSeq[RemotingValue](length)  # Pre-allocate sequence
 
@@ -402,62 +524,74 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         idRef: id
       ))
     else:
-      # Assign a new ID and write the full class record
       let id = ctx.nextId
       ctx.nextId += 1
       ctx.setWrittenObjectId(classPtr, id)
-      
-      # First gather the member type information
-      var binaryTypes: seq[BinaryType] = @[]
-      var additionalInfos: seq[AdditionalTypeInfo] = @[]
-      
-      # Create type info for each member based on RemotingValue kind
-      for member in value.classVal.members:
-        case member.kind
-        of rvPrimitive:
-          binaryTypes.add(btPrimitive)
-          additionalInfos.add(AdditionalTypeInfo(
-            kind: btPrimitive, 
-            primitiveType: member.primitiveVal.kind
-          ))
-        of rvString:
-          binaryTypes.add(btString)
-          additionalInfos.add(AdditionalTypeInfo(kind: btString))
-        of rvNull:
-          binaryTypes.add(btObject)
-          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-        of rvReference:
-          binaryTypes.add(btObject)
-          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-        of rvClass, rvArray:
-          binaryTypes.add(btObject)
-          additionalInfos.add(AdditionalTypeInfo(kind: btObject))
-      
-      let memberTypeInfo = MemberTypeInfo(
-        binaryTypes: binaryTypes,
-        additionalInfos: additionalInfos
-      )
-      
-      # Get the class record from the value
-      let classRecord = value.classVal.record.classWithMembersAndTypes
-      
-      # Create a new ClassWithMembersAndTypes with our id
-      let newClassRecord = ClassWithMembersAndTypes(
-        recordType: rtClassWithMembersAndTypes,
-        classInfo: ClassInfo(
-          objectId: id,
-          name: classRecord.classInfo.name,
-          memberCount: classRecord.classInfo.memberCount,
-          memberNames: classRecord.classInfo.memberNames
-        ),
-        memberTypeInfo: memberTypeInfo,
-        libraryId: classRecord.libraryId
-      )
-      writeClassWithMembersAndTypes(outp, newClassRecord)
-      
-      # Write the member values
-      for member in value.classVal.members:
-        writeRemotingValue(outp, member, ctx)
+
+      var memberTypeInfo: MemberTypeInfo
+      let needsTypeInfo = value.classVal.record.kind in {rtClassWithMembersAndTypes, rtSystemClassWithMembersAndTypes}
+
+      if needsTypeInfo:
+        memberTypeInfo = determineMemberTypeInfo(value.classVal.members)
+
+        # Validate member count consistency (optional but good practice)
+        let expectedMemberCount = case value.classVal.record.kind
+                                  of rtSystemClassWithMembersAndTypes: value.classVal.record.systemClassWithMembersAndTypes.classInfo.memberNames.len
+                                  of rtClassWithMembersAndTypes: value.classVal.record.classWithMembersAndTypes.classInfo.memberNames.len
+                                  else: -1
+        if value.classVal.members.len != expectedMemberCount:
+           raise newException(ValueError, "Actual member count (" & $value.classVal.members.len &
+                              ") does not match expected count (" & $expectedMemberCount &
+                              ") for class record " & $value.classVal.record.kind)
+
+      # Write the correct class record header using the new ID and derived MemberTypeInfo
+      case value.classVal.record.kind
+      of rtClassWithId:
+        var recordToWrite = value.classVal.record.classWithId
+        recordToWrite.objectId = id # Assign the new ID
+        writeClassWithId(outp, recordToWrite)
+        echo "Warning: Writing ClassWithId for first encounter of object ID ", id, ". Members might be lost."
+        # No members follow ClassWithId per spec/grammar
+
+      of rtSystemClassWithMembers:
+        var recordToWrite = value.classVal.record.systemClassWithMembers
+        recordToWrite.classInfo.objectId = id # Assign the new ID
+        recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
+        writeSystemClassWithMembers(outp, recordToWrite)
+        # Write members following the header
+        for member in value.classVal.members:
+          writeRemotingValue(outp, member, ctx)
+
+      of rtClassWithMembers:
+        var recordToWrite = value.classVal.record.classWithMembers
+        recordToWrite.classInfo.objectId = id # Assign the new ID
+        recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
+        writeClassWithMembers(outp, recordToWrite)
+        # Write members following the header
+        for member in value.classVal.members:
+          writeRemotingValue(outp, member, ctx)
+
+      of rtSystemClassWithMembersAndTypes:
+        var recordToWrite = value.classVal.record.systemClassWithMembersAndTypes
+        recordToWrite.classInfo.objectId = id # Assign the new ID
+        recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
+        recordToWrite.memberTypeInfo = memberTypeInfo
+        writeSystemClassWithMembersAndTypes(outp, recordToWrite)
+        # Write members following the header
+        for member in value.classVal.members:
+          writeRemotingValue(outp, member, ctx)
+
+      of rtClassWithMembersAndTypes:
+        var recordToWrite = value.classVal.record.classWithMembersAndTypes
+        recordToWrite.classInfo.objectId = id # Assign the new ID
+        recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
+        recordToWrite.memberTypeInfo = memberTypeInfo
+        writeClassWithMembersAndTypes(outp, recordToWrite)
+        # Write members following the header
+        for member in value.classVal.members:
+          writeRemotingValue(outp, member, ctx)
+      else:
+        raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
   of rvArray:
     let arrayPtr = cast[pointer](addr value.arrayVal)
     if ctx.hasWrittenObject(arrayPtr):
