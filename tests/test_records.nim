@@ -913,8 +913,10 @@ suite "BinaryLibrary in RemotingMessage Tests":
     let valueWithMembers = RemotingValue(
       kind: rvClass,
       classVal: ClassValue(
-        classInfo: msg.referencedRecords[0].classRecord.classWithMembersAndTypes.classInfo,
-        libraryId: msg.referencedRecords[0].classRecord.classWithMembersAndTypes.libraryId,
+        record: context.ClassRecord(
+          kind: rtClassWithMembersAndTypes,
+          classWithMembersAndTypes: msg.referencedRecords[0].classRecord.classWithMembersAndTypes
+        ),
         members: @[
           RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "test value"))
         ]
@@ -1143,9 +1145,16 @@ suite "SerializationContext Tests":
     let arrayValue = RemotingValue(
       kind: rvArray, 
       arrayVal: ArrayValue(
-        arrayInfo: ArrayInfo(
-          objectId: 1,
-          length: 2
+        record: context.ArrayRecord(
+          kind: rtArraySinglePrimitive,
+          arraySinglePrimitive: ArraySinglePrimitive(
+            recordType: rtArraySinglePrimitive,
+            arrayInfo: ArrayInfo(
+              objectId: 1,
+              length: 2
+            ),
+            primitiveType: ptInt32
+          )
         ),
         elements: @[
           RemotingValue(
@@ -1175,7 +1184,10 @@ suite "SerializationContext Tests":
     let decoded = readRemotingValue(inStream)
 
     check decoded.kind == rvArray
-    check decoded.arrayVal.arrayInfo.length == 2
+    # Check the record kind first
+    check decoded.arrayVal.record.kind == rtArraySingleObject
+    # Only access arraySingleObject if kind is correct
+    check decoded.arrayVal.record.arraySingleObject.arrayInfo.length == 2
     check decoded.arrayVal.elements.len == 2
     check decoded.arrayVal.elements[0].kind == rvPrimitive
     check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
@@ -1189,9 +1201,15 @@ suite "SerializationContext Tests":
     let arrayValue = RemotingValue(
       kind: rvArray, 
       arrayVal: ArrayValue(
-        arrayInfo: ArrayInfo(
-          objectId: 1,
-          length: 3
+        record: context.ArrayRecord(
+          kind: rtArraySingleObject,
+          arraySingleObject: ArraySingleObject(
+            recordType: rtArraySingleObject,
+            arrayInfo: ArrayInfo(
+              objectId: 1,
+              length: 3
+            )
+          )
         ),
         elements: @[
           RemotingValue(
@@ -1219,7 +1237,10 @@ suite "SerializationContext Tests":
     let decoded = readRemotingValue(inStream)
 
     check decoded.kind == rvArray
-    check decoded.arrayVal.arrayInfo.length == 3
+    # Check the record kind first
+    check decoded.arrayVal.record.kind == rtArraySingleObject
+    # Only access arraySingleObject if kind is correct
+    check decoded.arrayVal.record.arraySingleObject.arrayInfo.length == 3
     check decoded.arrayVal.elements.len == 3
     check decoded.arrayVal.elements[0].kind == rvPrimitive
     check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
@@ -1273,7 +1294,10 @@ suite "SerializationContext Tests":
     
     # Verify the results
     check decoded.kind == rvArray
-    check decoded.arrayVal.arrayInfo.length == 5
+    # Check the record kind first
+    check decoded.arrayVal.record.kind == rtArraySingleObject
+    # Only access arraySingleObject if kind is correct
+    check decoded.arrayVal.record.arraySingleObject.arrayInfo.length == 5
     check decoded.arrayVal.elements.len == 5
     
     # First element should be our primitive value
@@ -1308,9 +1332,15 @@ suite "SerializationContext Tests":
     let arrayArg = RemotingValue(
       kind: rvArray,
       arrayVal: ArrayValue(
-        arrayInfo: ArrayInfo(
-          objectId: 1, # Must be positive
-          length: 2
+        record: context.ArrayRecord(
+          kind: rtArraySingleObject,
+          arraySingleObject: ArraySingleObject(
+            recordType: rtArraySingleObject,
+            arrayInfo: ArrayInfo(
+              objectId: 1, # Must be positive
+              length: 2
+            )
+          )
         ),
         elements: @[
           RemotingValue(
@@ -1320,9 +1350,16 @@ suite "SerializationContext Tests":
           RemotingValue(
             kind: rvArray,
             arrayVal: ArrayValue(
-              arrayInfo: ArrayInfo(
-                objectId: 2, # Must be positive
-                length: 2
+              record: context.ArrayRecord(
+                kind: rtArraySinglePrimitive,
+                arraySinglePrimitive: ArraySinglePrimitive(
+                  recordType: rtArraySinglePrimitive,
+                  arrayInfo: ArrayInfo(
+                    objectId: 2, # Must be positive
+                    length: 2
+                  ),
+                  primitiveType: ptInt32
+                )
               ),
               elements: @[
                 RemotingValue(
@@ -1394,8 +1431,21 @@ suite "SerializationContext Tests":
     let classValue = RemotingValue(
       kind: rvClass,
       classVal: ClassValue(
-        classInfo: classInfoVal,
-        libraryId: 1,
+        record: context.ClassRecord(
+          kind: rtClassWithMembersAndTypes,
+          classWithMembersAndTypes: ClassWithMembersAndTypes(
+            recordType: rtClassWithMembersAndTypes,
+            classInfo: classInfoVal,
+            memberTypeInfo: MemberTypeInfo(
+              binaryTypes: @[btPrimitive, btString],
+              additionalInfos: @[
+                AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+                AdditionalTypeInfo(kind: btString)
+              ]
+            ),
+            libraryId: 1
+          )
+        ),
         members: @[
           RemotingValue(
             kind: rvPrimitive,
@@ -1424,8 +1474,8 @@ suite "SerializationContext Tests":
     
     # Verify
     check decoded.kind == rvClass
-    check decoded.classVal.classInfo.name.value == "TestClass"
-    check decoded.classVal.classInfo.memberCount == 2
+    check decoded.classVal.record.classWithMembersAndTypes.classInfo.name.value == "TestClass"
+    check decoded.classVal.record.classWithMembersAndTypes.classInfo.memberCount == 2
     check decoded.classVal.members.len == 2
     
     # Check the class members

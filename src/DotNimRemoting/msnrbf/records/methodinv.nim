@@ -56,13 +56,13 @@ type
     of rvArray:
       arrayVal*: ArrayValue
 
+
   ClassValue* = object
-    classInfo*: ClassInfo        # From records/class.nim
-    members*: seq[RemotingValue] # Member values
-    libraryId*: int32            # Library reference, if applicable
+    record*: ClassRecord          # Tracks the specific class record type
+    members*: seq[RemotingValue]  # Member values
 
   ArrayValue* = object
-    arrayInfo*: ArrayInfo        # From records/arrays.nim
+    record*: ArrayRecord          # Tracks the specific array record type
     elements*: seq[RemotingValue] # Array elements
 
 
@@ -172,30 +172,35 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
   of rtMemberReference:
     let refRecord = readMemberReference(inp)
     result = RemotingValue(kind: rvReference, idRef: refRecord.idRef)
-  of rtClassWithId..rtClassWithMembersAndTypes:
-    # Simplified: assumes ClassWithMembersAndTypes; adjust for other types if needed
+  of rtClassWithMembersAndTypes:
     let classRecord = readClassWithMembersAndTypes(inp)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
-      classInfo: classRecord.classInfo,
-      members: @[],
-      libraryId: classRecord.libraryId
+      record: ClassRecord(kind: rtClassWithMembersAndTypes, classWithMembersAndTypes: classRecord),
+      members: @[]
     ))
     for i in 0..<classRecord.classInfo.memberCount:
       result.classVal.members.add(readRemotingValue(inp))
+  of rtClassWithId:
+    let classRecord = readClassWithId(inp)
+    result = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtClassWithId, classWithId: classRecord),
+      members: @[]
+    ))
   of rtArraySinglePrimitive:
     # Read ArraySinglePrimitive record (Section 2.4.3.3)
     let arrayRecord = readArraySinglePrimitive(inp)
     let primitiveType = arrayRecord.primitiveType  # Type of all elements
-    let length = arrayRecord.arrayInfo.length              # Number of elements to read
-    var elements = newSeq[RemotingValue]()    # Initialize empty sequence
+    let length = arrayRecord.arrayInfo.length     # Number of elements to read
+    var elements = newSeq[RemotingValue](length)  # Pre-allocate sequence
 
     for i in 0..<length:
-      let value = readMemberPrimitiveUnTyped(inp, primitiveType)
-      let rv = RemotingValue(kind: rvPrimitive, primitiveVal: value.value)
-      elements.add(rv)
+      let value = readMemberPrimitiveUnTyped(inp, arrayRecord.primitiveType)
+      elements[i] = RemotingValue(kind: rvPrimitive, primitiveVal: value.value)
 
-    # Construct array result
-    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(arrayInfo: arrayRecord.arrayInfo, elements: elements))
+    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(kind: rtArraySinglePrimitive, arraySinglePrimitive: arrayRecord),
+      elements: elements
+    ))
   of rtArraySingleString:
     let arrayRecord = readArraySingleString(inp)
     let length = arrayRecord.arrayInfo.length
@@ -207,11 +212,14 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       elements.add(rv)
 
     # Construct array result
-    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(arrayInfo: arrayRecord.arrayInfo, elements: elements))
+    result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(kind: rtArraySingleString, arraySingleString: arrayRecord),
+      elements: elements
+    ))
   of rtArraySingleObject:
     let arrayRecord = readArraySingleObject(inp)
     result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
-      arrayInfo: arrayRecord.arrayInfo,
+      record: ArrayRecord(kind: rtArraySingleObject, arraySingleObject: arrayRecord),
       elements: @[]
     ))
     
@@ -277,10 +285,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     result = RemotingValue(
       kind: rvArray,
       arrayVal: ArrayValue(
-        arrayInfo: ArrayInfo(
-          objectId: arrayRecord.objectId,
-          length: totalElements
-        ),
+        record: ArrayRecord(kind: rtBinaryArray, binaryArray: arrayRecord),
         elements: elements
       )
     )
@@ -402,10 +407,6 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       ctx.nextId += 1
       ctx.setWrittenObjectId(classPtr, id)
       
-      # Create a copy of classInfo with the new objectId
-      var classInfo = value.classVal.classInfo
-      classInfo.objectId = id
-      
       # First gather the member type information
       var binaryTypes: seq[BinaryType] = @[]
       var additionalInfos: seq[AdditionalTypeInfo] = @[]
@@ -437,13 +438,22 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         additionalInfos: additionalInfos
       )
       
-      let classRecord = ClassWithMembersAndTypes(
+      # Get the class record from the value
+      let classRecord = value.classVal.record.classWithMembersAndTypes
+      
+      # Create a new ClassWithMembersAndTypes with our id
+      let newClassRecord = ClassWithMembersAndTypes(
         recordType: rtClassWithMembersAndTypes,
-        classInfo: classInfo,  # Use the copy with updated objectId
+        classInfo: ClassInfo(
+          objectId: id,
+          name: classRecord.classInfo.name,
+          memberCount: classRecord.classInfo.memberCount,
+          memberNames: classRecord.classInfo.memberNames
+        ),
         memberTypeInfo: memberTypeInfo,
-        libraryId: value.classVal.libraryId
+        libraryId: classRecord.libraryId
       )
-      writeClassWithMembersAndTypes(outp, classRecord)
+      writeClassWithMembersAndTypes(outp, newClassRecord)
       
       # Write the member values
       for member in value.classVal.members:
@@ -463,13 +473,13 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       ctx.nextId += 1
       ctx.setWrittenObjectId(arrayPtr, id)
       
-      # Create a copy of arrayInfo with the new objectId
-      var arrayInfo = value.arrayVal.arrayInfo
-      arrayInfo.objectId = id  # Set the objectId
-      
+      # Create a new ArraySingleObject with our ID
       let arrayRecord = ArraySingleObject(
         recordType: rtArraySingleObject,
-        arrayInfo: arrayInfo  # Use the copy with updated objectId
+        arrayInfo: ArrayInfo(
+          objectId: id,
+          length: int32(value.arrayVal.elements.len)
+        )
       )
       writeArraySingleObject(outp, arrayRecord)
       
@@ -533,19 +543,14 @@ proc `$`*(remVal: RemotingValue): string =
   of rvReference: "Reference(id=" & $remVal.idRef & ")"
   of rvClass:
     var parts = @[
-      "Class(" & remVal.classVal.classInfo.name.value & ", id=" & $remVal.classVal.classInfo.objectId & "):",
+      "Class:",
       "  Members:"
     ]
     for i, member in remVal.classVal.members:
-      if i < remVal.classVal.classInfo.memberNames.len:
-        let name = remVal.classVal.classInfo.memberNames[i].value
-        parts.add("    " & name & ": " & $member)
-      else:
-        parts.add("    [" & $i & "]: " & $member)
+      parts.add("    [" & $i & "]: " & $member)
     parts.join("\n")
   of rvArray:
     var elements: seq[string] = @[]
     for elem in remVal.arrayVal.elements:
       elements.add($elem)
-    "Array(id=" & $remVal.arrayVal.arrayInfo.objectId & ", length=" & 
-    $remVal.arrayVal.arrayInfo.length & "): [" & elements.join(", ") & "]"
+    "Array(length=" & $remVal.arrayVal.elements.len & "): [" & elements.join(", ") & "]"
