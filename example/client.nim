@@ -1,6 +1,6 @@
 import asyncdispatch
-import ../src/tcp/[client, common, helpers]
-import ../src/msnrbf/helpers
+import ../src/DotNimRemoting/tcp/[client, common, helpers]
+import ../src/DotNimRemoting/msnrbf/helpers
 
 # Example client usage
 proc clientExample() {.async.} =

@@ -1,6 +1,6 @@
 import faststreams/inputs
-import ../../src/tcp/[client, common]
-import ../../src/msnrbf/[helpers, grammar, enums]
+import ../../src/DotNimRemoting/tcp/[client, common]
+import ../../src/DotNimRemoting/msnrbf/[helpers, grammar, enums]
 import asyncdispatch
 
 proc main() {.async.} =

@@ -1,7 +1,7 @@
 import faststreams/inputs
-import ../../src/tcp/[server, common]
-import ../../src/msnrbf/[grammar, enums, helpers]
-import ../../src/msnrbf/records/member
+import ../../src/DotNimRemoting/tcp/[server, common]
+import ../../src/DotNimRemoting/msnrbf/[grammar, enums, helpers]
+import ../../src/DotNimRemoting/msnrbf/records/member
 import asyncdispatch
 
 proc echoHandler(requestUri, methodName, typeName: string, requestData: seq[byte]): Future[seq[byte]] {.async.} =

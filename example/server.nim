@@ -1,6 +1,6 @@
 import asyncdispatch
-import ../src/tcp/[server, common, helpers]
-import ../src/msnrbf/helpers
+import ../src/DotNimRemoting/tcp/[server, common, helpers]
+import ../src/DotNimRemoting/msnrbf/helpers
 
 # Example server usage
 proc handleRequest(requestUri, methodName, typeName: string,
