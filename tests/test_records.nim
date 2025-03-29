@@ -1185,9 +1185,9 @@ suite "SerializationContext Tests":
 
     check decoded.kind == rvArray
     # Check the record kind first
-    check decoded.arrayVal.record.kind == rtArraySingleObject
-    # Only access arraySingleObject if kind is correct
-    check decoded.arrayVal.record.arraySingleObject.arrayInfo.length == 2
+    check decoded.arrayVal.record.kind == rtArraySinglePrimitive
+    # Only access arraySinglePrimitive if kind is correct
+    check decoded.arrayVal.record.arraySinglePrimitive.arrayInfo.length == 2
     check decoded.arrayVal.elements.len == 2
     check decoded.arrayVal.elements[0].kind == rvPrimitive
     check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32

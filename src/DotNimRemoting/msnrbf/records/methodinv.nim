@@ -473,19 +473,74 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       ctx.nextId += 1
       ctx.setWrittenObjectId(arrayPtr, id)
       
-      # Create a new ArraySingleObject with our ID
-      let arrayRecord = ArraySingleObject(
-        recordType: rtArraySingleObject,
-        arrayInfo: ArrayInfo(
-          objectId: id,
-          length: int32(value.arrayVal.elements.len)
-        )
-      )
-      writeArraySingleObject(outp, arrayRecord)
-      
-      # Write the array elements
-      for elem in value.arrayVal.elements:
-        writeRemotingValue(outp, elem, ctx)
+      let arrayRecordVariant = value.arrayVal.record # This holds the specific record type
+      let elements = value.arrayVal.elements
+
+      # --- Write the appropriate Array Record Header ---
+      # Update the objectId/arrayInfo.objectId before writing
+      case arrayRecordVariant.kind
+      of rtArraySingleObject:
+        var recordToWrite = arrayRecordVariant.arraySingleObject
+        recordToWrite.arrayInfo.objectId = id # Assign the new ID
+        recordToWrite.arrayInfo.length = elements.len.int32 # Ensure length matches
+        writeArraySingleObject(outp, recordToWrite)
+
+        # Write elements recursively (handles all types: primitive, string, null, ref, class, array)
+        for elem in elements:
+          writeRemotingValue(outp, elem, ctx)
+
+      of rtArraySinglePrimitive:
+        var recordToWrite = arrayRecordVariant.arraySinglePrimitive
+        recordToWrite.arrayInfo.objectId = id # Assign the new ID
+        recordToWrite.arrayInfo.length = elements.len.int32 # Ensure length matches
+        let expectedPrimitiveType = recordToWrite.primitiveType
+        writeArraySinglePrimitive(outp, recordToWrite)
+
+        # Write elements as MemberPrimitiveUnTyped (Spec 2.4.3.3)
+        for elem in elements:
+          if elem.kind != rvPrimitive or elem.primitiveVal.kind != expectedPrimitiveType:
+            raise newException(ValueError, "Element type mismatch in ArraySinglePrimitive. Expected " &
+                               $expectedPrimitiveType & ", got " & $elem.kind)
+          # Write only the value, without type info or record enum prefix
+          writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: elem.primitiveVal))
+
+      of rtArraySingleString:
+        var recordToWrite = arrayRecordVariant.arraySingleString
+        recordToWrite.arrayInfo.objectId = id # Assign the new ID
+        recordToWrite.arrayInfo.length = elements.len.int32 # Ensure length matches
+        writeArraySingleString(outp, recordToWrite)
+
+        for elem in elements:
+          if elem.kind notin {rvString, rvNull, rvReference}:
+             raise newException(ValueError, "Invalid element type for ArraySingleString: " & $elem.kind)
+          writeRemotingValue(outp, elem, ctx)
+
+      of rtBinaryArray:
+        var recordToWrite = arrayRecordVariant.binaryArray
+        recordToWrite.objectId = id # Assign the new ID
+        # Ensure lengths product matches element count (caller responsibility to construct correctly)
+        let totalElements = recordToWrite.lengths.foldl(a * b, 1'i32)
+        if totalElements != elements.len.int32:
+           raise newException(ValueError, "BinaryArray lengths product mismatch with element count")
+        writeBinaryArray(outp, recordToWrite)
+
+        # Write elements based on the array's declared type info
+        let arrayItemType = recordToWrite.typeEnum
+        if arrayItemType == btPrimitive:
+          # Optimization: Write as MemberPrimitiveUnTyped
+          let expectedPrimitiveType = recordToWrite.additionalTypeInfo.primitiveType
+          for elem in elements:
+            if elem.kind != rvPrimitive or elem.primitiveVal.kind != expectedPrimitiveType:
+              raise newException(ValueError, "Element type mismatch in BinaryArray (Primitive). Expected " &
+                                 $expectedPrimitiveType & ", got " & $elem.kind)
+            writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: elem.primitiveVal))
+        else:
+          # General case: Write elements recursively (handles all memberReference types)
+          # TODO: Implement ObjectNullMultiple optimization here
+          for elem in elements:
+            writeRemotingValue(outp, elem, ctx)
+      else:
+        raise newException(ValueError, "Unsupported array record kind for writing: " & $arrayRecordVariant.kind)
 
 # String representation
 proc `$`*(valueWithCode: ValueWithCode): string =
