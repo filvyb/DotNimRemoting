@@ -2,6 +2,7 @@ import asyncnet, asyncdispatch
 import faststreams/[outputs]
 import types, helpers, common
 import strutils, uri
+import ../msnrbf/records/member
 
 type
   NrtpTcpClient* = ref object
@@ -141,12 +142,45 @@ proc invoke*(client: NrtpTcpClient,
   ## This combines sendRequest and recvReply into a single operation
   
   # Send the request
-  debugLog "[CLIENT] Sending bytes: ", requestData
+  debugLog "[CLIENT] Sending bytes: ", requestData.len, " bytes"
   await client.sendRequest(methodName, typeName, isOneWay, requestData)
   
   # If one-way method, no response is expected
   if isOneWay:
+    debugLog "[CLIENT] One-way call, no response expected"
     return @[]
   
   # Receive and return the reply
+  debugLog "[CLIENT] Waiting for response"
   return await client.recvReply()
+
+proc callMethod*(client: NrtpTcpClient,
+               methodName: string,
+               typeName: string,
+               args: seq[PrimitiveValue] = @[]): Future[PrimitiveValue] {.async.} =
+  ## Calls a remote method with primitive arguments and returns the primitive result
+  ## This is a higher-level wrapper that handles serialization and deserialization
+  
+  # Create the request data
+  let requestData = createMethodCallRequest(methodName, typeName, args)
+  
+  # Invoke the method
+  let responseData = await client.invoke(methodName, typeName, false, requestData)
+  
+  # Extract and return the primitive value
+  return extractReturnValue(responseData)
+  
+proc callOneWayMethod*(client: NrtpTcpClient,
+                     methodName: string,
+                     typeName: string,
+                     args: seq[PrimitiveValue] = @[]): Future[void] {.async.} =
+  ## Calls a one-way remote method with primitive arguments (no return value)
+  ## This is a higher-level wrapper that handles serialization
+  
+  # Create the request data with one-way flag
+  let requestData = createOneWayMethodCallRequest(methodName, typeName, args)
+  
+  # Invoke the method with one-way flag
+  discard await client.invoke(methodName, typeName, true, requestData)
+  
+  # Nothing to return for one-way calls
