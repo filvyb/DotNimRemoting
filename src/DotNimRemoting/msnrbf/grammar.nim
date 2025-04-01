@@ -133,7 +133,8 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     raise newException(IOError, "Expected BinaryLibrary or BinaryMethodCall, got " & $nextRecord)
 
   # Handle optional call array based on flags
-  if MessageFlag.ArgsInArray in result.call.messageEnum or
+  if MessageFlag.ArgsIsArray in result.call.messageEnum or
+     MessageFlag.ArgsInArray in result.call.messageEnum or
      MessageFlag.ContextInArray in result.call.messageEnum or
      MessageFlag.MethodSignatureInArray in result.call.messageEnum or
      MessageFlag.GenericMethod in result.call.messageEnum:
@@ -308,7 +309,8 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
   writeBinaryMethodCall(outp, call)
 
   # Determine if a call array is required based on the messageEnum flags
-  if MessageFlag.ArgsInArray in call.messageEnum or 
+  if MessageFlag.ArgsIsArray in call.messageEnum or
+     MessageFlag.ArgsInArray in call.messageEnum or
      MessageFlag.ContextInArray in call.messageEnum or
      MessageFlag.MethodSignatureInArray in call.messageEnum or
      MessageFlag.GenericMethod in call.messageEnum:
