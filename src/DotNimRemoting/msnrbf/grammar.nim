@@ -15,6 +15,7 @@ type
     methodCallArray*: seq[RemotingValue]   # Optional method call array
     referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
     callArrayRecord*: Option[ReferenceableRecord] # Optional call array record
+    referencedRemotingValues*: seq[RemotingValue] # Optional referenced remoting values
     tail*: MessageEnd                      # Required message end marker
 
 # String representations
@@ -27,6 +28,11 @@ proc `$`*(msg: RemotingMessage): string =
     "    HeaderId: " & $msg.header.headerId,
     "    Version: " & $msg.header.majorVersion & "." & $msg.header.minorVersion
   ]
+
+  if msg.libraries.len > 0:
+    parts.add("  Libraries: " & $msg.libraries.len & " libraries")
+    for i, lib in msg.libraries:
+      parts.add("    Library[" & $i & "]: " & $lib.libraryName)
   
   if msg.methodCall.isSome:
     let callStr = $msg.methodCall.get
@@ -46,6 +52,11 @@ proc `$`*(msg: RemotingMessage): string =
     parts.add("  ReferencedRecords: " & $msg.referencedRecords.len & " records")
     for i, record in msg.referencedRecords:
       parts.add("    Record[" & $i & "]: kind=" & $record.kind)
+  
+  if msg.referencedRemotingValues.len > 0:
+    parts.add("  ReferencedRemotingValues: " & $msg.referencedRemotingValues.len & " values")
+    for i, value in msg.referencedRemotingValues:
+      parts.add("    Value[" & $i & "]: " & $value)
   
   parts.add("  End of RemotingMessage " & $msg.tail.recordType)
   
@@ -373,8 +384,8 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
     writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, msg.callArrayRecord, ctx)
   
   # Write referenced records (e.g., classes, arrays, strings)
-  for record in msg.referencedRecords:
-    writeReferenceable(outp, record)
+  for rv in msg.referencedRemotingValues:
+    writeRemotingValue(outp, rv, ctx)
 
   # Write the message end
   writeMessageEnd(outp, msg.tail)
@@ -383,7 +394,7 @@ proc newRemotingMessage*(ctx: SerializationContext,
                         methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
                         callArray: seq[RemotingValue] = @[],
-                        refs: seq[ReferenceableRecord] = @[],
+                        referencedVals: seq[RemotingValue] = @[],
                         libraries: seq[BinaryLibrary] = @[]): RemotingMessage =
   ## Creates a new RemotingMessage, assigning IDs to referencedRecords using the context
   # Validate that exactly one of methodCall or methodReturn is provided
@@ -392,15 +403,12 @@ proc newRemotingMessage*(ctx: SerializationContext,
   if methodCall.isSome and methodReturn.isSome:
     raise newException(ValueError, "Cannot have both method call and return")
 
-  # Assign IDs to all referenced records
-  for r in refs:
-    discard ctx.assignId(r)
-
   # Determine if a call array is needed based on message flags
   var needsCallArray = false
   if methodCall.isSome:
     let call = methodCall.get
     needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or
+                     MessageFlag.ArgsIsArray in call.messageEnum or
                      MessageFlag.ContextInArray in call.messageEnum or
                      MessageFlag.MethodSignatureInArray in call.messageEnum or
                      MessageFlag.GenericMethod in call.messageEnum
@@ -429,6 +437,19 @@ proc newRemotingMessage*(ctx: SerializationContext,
     refRecord.arrayRecord.arraySingleObject.arrayInfo.objectId = rootId
     callArrayRef = some(refRecord)
 
+  for rv in referencedVals:
+    # Assign IDs to referenced values
+    if rv.kind == rvClass:
+      var classRecord = ReferenceableRecord(kind: rv.classVal.record.kind)
+      classRecord.classRecord = rv.classVal.record
+      discard ctx.assignId(classRecord)
+    elif rv.kind == rvArray:
+      let arrayRecord = ReferenceableRecord(kind: rv.arrayVal.record.kind)
+      arrayRecord.arrayRecord = rv.arrayVal.record
+      discard ctx.assignId(arrayRecord)
+    elif rv.kind == rvString:
+      # TODO: Handle BinaryObjectString
+      discard
   # Create header with appropriate rootId and headerId
   let header = SerializationHeaderRecord(
     recordType: rtSerializedStreamHeader,
@@ -446,6 +467,6 @@ proc newRemotingMessage*(ctx: SerializationContext,
     methodReturn: methodReturn,
     methodCallArray: callArray,
     callArrayRecord: callArrayRef,
-    referencedRecords: refs,
+    referencedRemotingValues: referencedVals,
     tail: MessageEnd(recordType: rtMessageEnd)
   )
