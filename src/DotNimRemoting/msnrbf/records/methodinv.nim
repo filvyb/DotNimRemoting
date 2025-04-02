@@ -524,25 +524,11 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         idRef: id
       ))
     else:
-      let id = ctx.nextId
-      ctx.nextId += 1
-      ctx.setWrittenObjectId(classPtr, id)
+      let id = assignIdForPointer(ctx, classPtr)
 
       var memberTypeInfo: MemberTypeInfo
       let needsTypeInfo = value.classVal.record.kind in {rtClassWithMembersAndTypes, rtSystemClassWithMembersAndTypes}
 
-      if needsTypeInfo:
-        memberTypeInfo = determineMemberTypeInfo(value.classVal.members)
-
-        # Validate member count consistency (optional but good practice)
-        let expectedMemberCount = case value.classVal.record.kind
-                                  of rtSystemClassWithMembersAndTypes: value.classVal.record.systemClassWithMembersAndTypes.classInfo.memberNames.len
-                                  of rtClassWithMembersAndTypes: value.classVal.record.classWithMembersAndTypes.classInfo.memberNames.len
-                                  else: -1
-        if value.classVal.members.len != expectedMemberCount:
-           raise newException(ValueError, "Actual member count (" & $value.classVal.members.len &
-                              ") does not match expected count (" & $expectedMemberCount &
-                              ") for class record " & $value.classVal.record.kind)
 
       # Write the correct class record header using the new ID and derived MemberTypeInfo
       case value.classVal.record.kind
@@ -575,7 +561,9 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         var recordToWrite = value.classVal.record.systemClassWithMembersAndTypes
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
-        recordToWrite.memberTypeInfo = memberTypeInfo
+        if recordToWrite.memberTypeInfo.binaryTypes.len == 0 and recordToWrite.classInfo.memberCount != 0: # Check if populated
+          recordToWrite.memberTypeInfo = determineMemberTypeInfo(value.classVal.members) # Fallback
+
         writeSystemClassWithMembersAndTypes(outp, recordToWrite)
         # Write members following the header
         for member in value.classVal.members:
@@ -590,7 +578,8 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         var recordToWrite = value.classVal.record.classWithMembersAndTypes
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
-        recordToWrite.memberTypeInfo = memberTypeInfo
+        if recordToWrite.memberTypeInfo.binaryTypes.len == 0 and recordToWrite.classInfo.memberCount != 0: # Check if populated
+          recordToWrite.memberTypeInfo = determineMemberTypeInfo(value.classVal.members) # Fallback
         writeClassWithMembersAndTypes(outp, recordToWrite)
         # Write members following the header
         for member in value.classVal.members:
