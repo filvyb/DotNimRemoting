@@ -579,7 +579,12 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         writeSystemClassWithMembersAndTypes(outp, recordToWrite)
         # Write members following the header
         for member in value.classVal.members:
-          writeRemotingValue(outp, member, ctx)
+          if member.kind == rvPrimitive and canWriteUntyped(member.primitiveVal):
+            # Write as MemberPrimitiveUnTyped
+            writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
+          else:
+            # Write the full member value
+            writeRemotingValue(outp, member, ctx)
 
       of rtClassWithMembersAndTypes:
         var recordToWrite = value.classVal.record.classWithMembersAndTypes
@@ -589,7 +594,12 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         writeClassWithMembersAndTypes(outp, recordToWrite)
         # Write members following the header
         for member in value.classVal.members:
-          writeRemotingValue(outp, member, ctx)
+          if member.kind == rvPrimitive and canWriteUntyped(member.primitiveVal):
+            # Write as MemberPrimitiveUnTyped
+            writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
+          else:
+            # Write the full member value
+            writeRemotingValue(outp, member, ctx)
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
   of rvArray:
