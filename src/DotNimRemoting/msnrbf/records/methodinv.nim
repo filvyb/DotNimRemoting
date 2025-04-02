@@ -495,11 +495,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         idRef: id
       ))
     else:
-      # For compatibility with the tests, use ID 1 for string objects
-      # This matches the expected test outputs
-      let id = ctx.nextId
-      ctx.nextId += 1
-      ctx.setWrittenObjectId(valuePtr, id)
+      let id = assignIdForPointer(ctx, valuePtr)
       
       let strRecord = BinaryObjectString(
         recordType: rtBinaryObjectString,
@@ -602,9 +598,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       ))
     else:
       # Assign a new ID and write the full array record
-      let id = ctx.nextId
-      ctx.nextId += 1
-      ctx.setWrittenObjectId(arrayPtr, id)
+      let id = assignIdForPointer(ctx, arrayPtr)
       
       let arrayRecordVariant = value.arrayVal.record # This holds the specific record type
       let elements = value.arrayVal.elements
