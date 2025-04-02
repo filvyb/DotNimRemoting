@@ -309,6 +309,20 @@ proc writeObjectNullMultiple256*(outp: OutputStream, obj: ObjectNullMultiple256)
   writeRecord(outp, obj.recordType)
   outp.write(byte(obj.nullCount))
 
+proc writeOptimizedNulls*(outp: OutputStream, nullCount: int32) =
+  ## Writes ObjectNullMultiple or ObjectNullMultiple256 based on count
+  if nullCount <= 0: return
+  if nullCount <= 255:
+    writeObjectNullMultiple256(outp, ObjectNullMultiple256(
+      recordType: rtObjectNullMultiple256,
+      nullCount: uint8(nullCount)
+    ))
+  else:
+    writeObjectNullMultiple(outp, ObjectNullMultiple(
+      recordType: rtObjectNullMultiple,
+      nullCount: int32(nullCount)
+    ))
+
 proc writeBinaryObjectString*(outp: OutputStream, obj: BinaryObjectString) =
   ## Writes BinaryObjectString record to stream  
   if obj.recordType != rtBinaryObjectString:

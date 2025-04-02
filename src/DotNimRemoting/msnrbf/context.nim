@@ -166,3 +166,13 @@ proc assignId*(ctx: SerializationContext, record: ReferenceableRecord): int32 =
     raise newException(ValueError, "Invalid ReferenceableRecord kind: " & $record.kind)
   
   return id
+
+proc assignIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
+  ## Assigns the next available ID for a given object pointer if not already assigned.
+  if ctx.hasWrittenObject(objPtr):
+    return ctx.getWrittenObjectId(objPtr)
+  else:
+    let id = ctx.nextId
+    ctx.nextId += 1
+    ctx.setWrittenObjectId(objPtr, id)
+    return id

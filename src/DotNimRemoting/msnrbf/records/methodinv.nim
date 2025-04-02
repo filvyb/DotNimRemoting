@@ -610,8 +610,6 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       let arrayRecordVariant = value.arrayVal.record # This holds the specific record type
       let elements = value.arrayVal.elements
 
-      # --- Write the appropriate Array Record Header ---
-      # Update the objectId/arrayInfo.objectId before writing
       case arrayRecordVariant.kind
       of rtArraySingleObject:
         var recordToWrite = arrayRecordVariant.arraySingleObject
@@ -620,8 +618,20 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         writeArraySingleObject(outp, recordToWrite)
 
         # Write elements recursively (handles all types: primitive, string, null, ref, class, array)
+        var nullCount: int32 = 0
         for elem in elements:
-          writeRemotingValue(outp, elem, ctx)
+          if elem.kind == rvNull:
+            nullCount += 1
+          else:
+            # Write any pending nulls
+            if nullCount > 0:
+              writeOptimizedNulls(outp, nullCount)
+              nullCount = 0
+            # Write the non-null element
+            writeRemotingValue(outp, elem, ctx)
+        # Write any trailing nulls
+        if nullCount > 0:
+          writeOptimizedNulls(outp, nullCount)
 
       of rtArraySinglePrimitive:
         var recordToWrite = arrayRecordVariant.arraySinglePrimitive
@@ -644,10 +654,22 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         recordToWrite.arrayInfo.length = elements.len.int32 # Ensure length matches
         writeArraySingleString(outp, recordToWrite)
 
+        var nullCount: int32 = 0
         for elem in elements:
-          if elem.kind notin {rvString, rvNull, rvReference}:
-             raise newException(ValueError, "Invalid element type for ArraySingleString: " & $elem.kind)
-          writeRemotingValue(outp, elem, ctx)
+           if elem.kind == rvNull:
+             nullCount += 1
+           else:
+             # Write any pending nulls
+             if nullCount > 0:
+               writeOptimizedNulls(outp, nullCount)
+               nullCount = 0
+             # Write the non-null element (String or Reference)
+             if elem.kind notin {rvString, rvReference}: # Validation added
+                raise newException(ValueError, "Invalid element type for ArraySingleString: " & $elem.kind)
+             writeRemotingValue(outp, elem, ctx)
+        # Write any trailing nulls
+        if nullCount > 0:
+          writeOptimizedNulls(outp, nullCount)
 
       of rtBinaryArray:
         var recordToWrite = arrayRecordVariant.binaryArray
@@ -670,9 +692,20 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
             writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: elem.primitiveVal))
         else:
           # General case: Write elements recursively (handles all memberReference types)
-          # TODO: Implement ObjectNullMultiple optimization here
+          var nullCount: int32 = 0
           for elem in elements:
-            writeRemotingValue(outp, elem, ctx)
+            if elem.kind == rvNull:
+              nullCount += 1
+            else:
+              # Write any pending nulls
+              if nullCount > 0:
+                writeOptimizedNulls(outp, nullCount)
+                nullCount = 0
+              # Write the non-null element
+              writeRemotingValue(outp, elem, ctx)
+          # Write any trailing nulls
+          if nullCount > 0:
+            writeOptimizedNulls(outp, nullCount)
       else:
         raise newException(ValueError, "Unsupported array record kind for writing: " & $arrayRecordVariant.kind)
 
