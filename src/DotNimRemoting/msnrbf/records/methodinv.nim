@@ -41,7 +41,7 @@ type
     callContext*: StringValueWithCode  # Optional Logical Call ID
     args*: ArrayOfValueWithCode  # Optional output arguments
 
-  RemotingValue* = object
+  RemotingValue* = ref object
     case kind*: RemotingValueKind
     of rvPrimitive:
       primitiveVal*: PrimitiveValue
@@ -57,11 +57,11 @@ type
       arrayVal*: ArrayValue
 
 
-  ClassValue* = object
+  ClassValue* = ref object
     record*: ClassRecord          # Tracks the specific class record type
     members*: seq[RemotingValue]  # Member values
 
-  ArrayValue* = object
+  ArrayValue* = ref object
     record*: ArrayRecord          # Tracks the specific array record type
     elements*: seq[RemotingValue] # Array elements
 

@@ -106,6 +106,27 @@ proc newSerializationContext*(): SerializationContext =
     writtenObjects: initTable[int, int32]()
   )
 
+proc `$`*(ctx: ReferenceContext): string =
+  result = "ReferenceContext(" & $ctx.objects.len() &
+               " objects, " & $ctx.libraries.len() & " libraries)"
+
+proc `$`*(ctx: SerializationContext): string =
+  result = "SerializationContext(\n" &
+           "  nextId: " & $ctx.nextId & ",\n" &
+           "  recordToId: {\n"
+      
+  # Show all record to ID mappings
+  for record, id in ctx.recordToId:
+    result.add("    " & $record.kind & " => " & $id & ",\n")
+      
+  result.add("  },\n  writtenObjects: {\n")
+      
+  # Show all written object pointers and their IDs
+  for ptrVal, id in ctx.writtenObjects.pairs():
+    result.add("    " & $ptrVal & " => " & $id & ",\n")
+      
+  result.add("  }\n)")
+
 proc hasWrittenObject*(ctx: SerializationContext, obj: pointer): bool =
   ## Check if an object pointer has been written before
   let key = cast[int](obj)
