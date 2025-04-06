@@ -401,6 +401,7 @@ proc newRemotingMessage*(ctx: SerializationContext,
   if methodCall.isSome:
     let call = methodCall.get
     needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or
+                     MessageFlag.ArgsIsArray in call.messageEnum or
                      MessageFlag.ContextInArray in call.messageEnum or
                      MessageFlag.MethodSignatureInArray in call.messageEnum or
                      MessageFlag.GenericMethod in call.messageEnum
