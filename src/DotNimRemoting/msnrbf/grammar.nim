@@ -266,38 +266,75 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
 
   raise newException(IOError, "Missing MessageEnd")
 
-proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord) = 
+proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord, ctx: SerializationContext) = 
   ## Writes a referenceable record (Classes/Arrays/BinaryObjectString)
   ## Section 2.7 grammar: referenceable = Classes/Arrays/BinaryObjectString
+  ## Uses SerializationContext for consistent ID management and reference detection
 
-  case record.kind:
+  # Check if this record was already written by checking the SerializationContext
+  let recordPtr = cast[pointer](record)
+  if ctx.hasWrittenObject(recordPtr):
+    # Record was previously serialized, write a reference instead
+    let id = ctx.getWrittenObjectId(recordPtr)
+    writeMemberReference(outp, MemberReference(
+      recordType: rtMemberReference,
+      idRef: id
+    ))
+    return
+
+  # First time writing this record - get or assign ID and mark as written
+  var id: int32
+  if ctx.hasAssignedId(recordPtr):
+    # Record already has an ID assigned (e.g., from message construction)
+    id = ctx.getAssignedId(recordPtr)
+  else:
+    # Assign new ID
+    id = ctx.nextId
+    ctx.nextId += 1
+    ctx.setAssignedId(recordPtr, id)
+  
+  # Mark as written now
+  ctx.setWrittenObjectId(recordPtr, id)
+  
+  # Ensure the inner record has the correct ID set before writing
+  case record.kind
   of rtClassWithId..rtClassWithMembersAndTypes:
-    case record.classRecord.kind:
+    case record.classRecord.kind
     of rtClassWithId:
+      record.classRecord.classWithId.objectId = id
       writeClassWithId(outp, record.classRecord.classWithId)
     of rtSystemClassWithMembers:
+      record.classRecord.systemClassWithMembers.classInfo.objectId = id
       writeSystemClassWithMembers(outp, record.classRecord.systemClassWithMembers)
     of rtClassWithMembers:
+      record.classRecord.classWithMembers.classInfo.objectId = id
       writeClassWithMembers(outp, record.classRecord.classWithMembers)
     of rtSystemClassWithMembersAndTypes:
+      record.classRecord.systemClassWithMembersAndTypes.classInfo.objectId = id
       writeSystemClassWithMembersAndTypes(outp, record.classRecord.systemClassWithMembersAndTypes)
     of rtClassWithMembersAndTypes:
+      record.classRecord.classWithMembersAndTypes.classInfo.objectId = id
       writeClassWithMembersAndTypes(outp, record.classRecord.classWithMembersAndTypes)
     else: discard
 
   of rtBinaryArray..rtArraySingleString:
     case record.arrayRecord.kind:
     of rtBinaryArray:
+      record.arrayRecord.binaryArray.objectId = id
       writeBinaryArray(outp, record.arrayRecord.binaryArray)
     of rtArraySinglePrimitive:
+      record.arrayRecord.arraySinglePrimitive.arrayInfo.objectId = id
       writeArraySinglePrimitive(outp, record.arrayRecord.arraySinglePrimitive)
     of rtArraySingleObject:
+      record.arrayRecord.arraySingleObject.arrayInfo.objectId = id
       writeArraySingleObject(outp, record.arrayRecord.arraySingleObject)
     of rtArraySingleString:
+      record.arrayRecord.arraySingleString.arrayInfo.objectId = id
       writeArraySingleString(outp, record.arrayRecord.arraySingleString)
     else: discard
 
   of rtBinaryObjectString:
+    record.stringRecord.objectId = id
     writeBinaryObjectString(outp, record.stringRecord)
 
   else:
@@ -319,7 +356,7 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
       raise newException(ValueError, "Call array expected but none provided")
     
     # Write the call array record (e.g., ArraySingleObject)
-    writeReferenceable(outp, callArrayRecord.get)
+    writeReferenceable(outp, callArrayRecord.get, ctx)
     
     # Serialize each element in the call array
     for value in array:
@@ -339,7 +376,7 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
       raise newException(ValueError, "Call array expected but none provided")
     
     # Write the call array record (e.g., ArraySingleObject)
-    writeReferenceable(outp, callArrayRecord.get)
+    writeReferenceable(outp, callArrayRecord.get, ctx)
     
     # Write each RemotingValue in the array
     for value in array:
@@ -374,7 +411,7 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   
   # Write referenced records (e.g., classes, arrays, strings)
   for record in msg.referencedRecords:
-    writeReferenceable(outp, record)
+    writeReferenceable(outp, record, ctx)
 
   # Write the message end
   writeMessageEnd(outp, msg.tail)

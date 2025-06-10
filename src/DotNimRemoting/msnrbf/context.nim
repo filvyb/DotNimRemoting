@@ -93,16 +93,16 @@ proc hash*(x: ReferenceableRecord): Hash =
 
 type
   SerializationContext* = ref object
-    ## Manages object ID assignment during serialization, tracking records and IDs
+    ## Manages object ID assignment during serialization, tracking objects by memory address
     nextId*: int32                               # Counter for generating new IDs, starts at 1
-    recordToId*: Table[ReferenceableRecord, int32]  # Maps records to their assigned IDs
-    writtenObjects*: Table[int, int32]  # Maps object memory addresses to their assigned IDs
+    assignedIds*: Table[int, int32]             # Maps object memory addresses to their assigned IDs
+    writtenObjects*: Table[int, int32]          # Maps object memory addresses to their assigned IDs for objects that have been written
 
 proc newSerializationContext*(): SerializationContext =
   ## Creates a new SerializationContext with an initial ID of 1
   SerializationContext(
     nextId: 1,
-    recordToId: initTable[ReferenceableRecord, int32](),
+    assignedIds: initTable[int, int32](),
     writtenObjects: initTable[int, int32]()
   )
 
@@ -113,11 +113,11 @@ proc `$`*(ctx: ReferenceContext): string =
 proc `$`*(ctx: SerializationContext): string =
   result = "SerializationContext(\n" &
            "  nextId: " & $ctx.nextId & ",\n" &
-           "  recordToId: {\n"
+           "  assignedIds: {\n"
       
-  # Show all record to ID mappings
-  for record, id in ctx.recordToId:
-    result.add("    " & $record.kind & " => " & $id & ",\n")
+  # Show all assigned IDs
+  for ptrVal, id in ctx.assignedIds.pairs():
+    result.add("    " & $ptrVal & " => " & $id & ",\n")
       
   result.add("  },\n  writtenObjects: {\n")
       
@@ -126,6 +126,21 @@ proc `$`*(ctx: SerializationContext): string =
     result.add("    " & $ptrVal & " => " & $id & ",\n")
       
   result.add("  }\n)")
+
+proc hasAssignedId*(ctx: SerializationContext, obj: pointer): bool =
+  ## Check if an object pointer has been assigned an ID
+  let key = cast[int](obj)
+  return ctx.assignedIds.hasKey(key)
+
+proc getAssignedId*(ctx: SerializationContext, obj: pointer): int32 =
+  ## Get the assigned ID for an object pointer
+  let key = cast[int](obj)
+  return ctx.assignedIds[key]
+
+proc setAssignedId*(ctx: SerializationContext, obj: pointer, id: int32) =
+  ## Store an object pointer and its assigned ID
+  let key = cast[int](obj)
+  ctx.assignedIds[key] = id
 
 proc hasWrittenObject*(ctx: SerializationContext, obj: pointer): bool =
   ## Check if an object pointer has been written before
@@ -143,15 +158,18 @@ proc setWrittenObjectId*(ctx: SerializationContext, obj: pointer, id: int32) =
   ctx.writtenObjects[key] = id
 
 proc assignId*(ctx: SerializationContext, record: ReferenceableRecord): int32 =
-  ## Assigns a unique ID to a ReferenceableRecord and sets its inner objectId.
-  ## Returns the assigned or existing ID.
-  if record in ctx.recordToId:
-    return ctx.recordToId[record]
+  ## Assigns a unique ID to a ReferenceableRecord using pointer-based tracking.
+  ## Sets the inner objectId and returns the assigned or existing ID.
+  ## This only assigns IDs, doesn't mark as written.
+  let recordPtr = cast[pointer](record)
+  
+  if ctx.hasAssignedId(recordPtr):
+    return ctx.getAssignedId(recordPtr)
   
   # Assign new ID and increment counter
   let id = ctx.nextId
   ctx.nextId += 1
-  ctx.recordToId[record] = id
+  ctx.setAssignedId(recordPtr, id)
   
   # Set the objectId in the inner record based on kind
   case record.kind
@@ -190,10 +208,12 @@ proc assignId*(ctx: SerializationContext, record: ReferenceableRecord): int32 =
 
 proc assignIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
   ## Assigns the next available ID for a given object pointer if not already assigned.
+  ## This assigns an ID and marks the object as written in one step.
   if ctx.hasWrittenObject(objPtr):
     return ctx.getWrittenObjectId(objPtr)
   else:
     let id = ctx.nextId
     ctx.nextId += 1
+    ctx.setAssignedId(objPtr, id)
     ctx.setWrittenObjectId(objPtr, id)
     return id

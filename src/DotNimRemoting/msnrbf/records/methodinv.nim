@@ -301,8 +301,22 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       record: ClassRecord(kind: rtClassWithMembersAndTypes, classWithMembersAndTypes: classRecord),
       members: @[]
     ))
+    # Read members according to their declared types in MemberTypeInfo
+    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
     for i in 0..<classRecord.classInfo.memberCount:
-      result.classVal.members.add(readRemotingValue(inp))
+      let binaryType = classRecord.memberTypeInfo.binaryTypes[i]
+      let additionalInfo = classRecord.memberTypeInfo.additionalInfos[i]
+      
+      case binaryType
+      of btPrimitive:
+        let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
+        result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
+      of btString:
+        let strValue = readLengthPrefixedString(inp)
+        result.classVal.members.add(RemotingValue(kind: rvString, stringVal: strValue))
+      of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+        # These types require reading full records
+        result.classVal.members.add(readRemotingValue(inp))
   of rtClassWithId:
     let classRecord = readClassWithId(inp)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
@@ -577,13 +591,23 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         if recordToWrite.memberTypeInfo.binaryTypes.len == 0 and recordToWrite.classInfo.memberCount != 0: # Check if populated
           recordToWrite.memberTypeInfo = determineMemberTypeInfo(value.classVal.members) # Fallback
         writeClassWithMembersAndTypes(outp, recordToWrite)
-        # Write members following the header
-        for member in value.classVal.members:
-          if member.kind == rvPrimitive and canWriteUntyped(member.primitiveVal):
-            # Write as MemberPrimitiveUnTyped
+        # Write members according to their declared types in MemberTypeInfo
+        # Section 2.3.2: Member values follow the class header and are written according to BinaryType
+        for i, member in value.classVal.members:
+          let binaryType = recordToWrite.memberTypeInfo.binaryTypes[i]
+          let additionalInfo = recordToWrite.memberTypeInfo.additionalInfos[i]
+          
+          case binaryType
+          of btPrimitive:
+            if member.kind != rvPrimitive:
+              raise newException(ValueError, "Expected primitive member for btPrimitive type")
             writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
-          else:
-            # Write the full member value
+          of btString:
+            if member.kind != rvString:
+              raise newException(ValueError, "Expected string member for btString type")
+            writeLengthPrefixedString(outp, member.stringVal.value)
+          of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+            # These types require writing full records
             writeRemotingValue(outp, member, ctx)
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
