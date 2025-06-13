@@ -66,11 +66,6 @@ type
     elements*: seq[RemotingValue] # Array elements
 
 
-proc peekRecordType*(inp: InputStream): RecordType =
-  ## Peeks the next record type without consuming it
-  if inp.readable:
-    result = RecordType(inp.peek)
-
 proc newStringValueWithCode*(value: string): StringValueWithCode =
   ## Creates new StringValueWithCode structure
   let strVal = PrimitiveValue(kind: ptString, stringVal: LengthPrefixedString(value: value))
@@ -269,7 +264,7 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
 
 proc readRemotingValue*(inp: InputStream): RemotingValue =
   ## Reads any serializable object from the input stream into a RemotingValue
-  let recordType = peekRecordType(inp)
+  let recordType = peekRecord(inp)
   case recordType
   of rtMemberPrimitiveTyped:
     let primTyped = readMemberPrimitiveTyped(inp)
@@ -361,7 +356,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     
     var count = 0
     while count < arrayRecord.arrayInfo.length:
-      let nextType = peekRecordType(inp)
+      let nextType = peekRecord(inp)
       if nextType == rtObjectNullMultiple:
         let nullRecord = readObjectNullMultiple(inp)
         for i in 0..<nullRecord.nullCount:
@@ -400,7 +395,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       # General case: elements can be any memberReference, including nulls
       var count = 0
       while count < totalElements:
-        let nextType = peekRecordType(inp)
+        let nextType = peekRecord(inp)
         if nextType == rtObjectNullMultiple:
           let nullRecord = readObjectNullMultiple(inp)
           let nullsToAdd = min(nullRecord.nullCount, totalElements - count)

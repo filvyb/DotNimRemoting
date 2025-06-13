@@ -153,7 +153,7 @@ proc validateMessageFlags*(flags: MessageFlags) =
 proc peekRecord*(inp: InputStream): RecordType =
   ## Peeks record type from stream without advancing position
   if inp.readable:
-    result = RecordType(inp.peek())
+    result = RecordType(inp.peek)
 
 proc readRecord*(inp: InputStream): RecordType =
   ## Reads record type from stream
