@@ -120,8 +120,6 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
   # Check for optional library
   let nextRecord = RecordType(inp.peek)
   if nextRecord == rtBinaryLibrary:
-    # Consume the peeked byte and read library
-    discard inp.read 
     let library = readBinaryLibrary(inp)
     ctx.addLibrary(library)
     
@@ -167,8 +165,6 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
   # Check for optional library
   let nextRecord = RecordType(inp.peek)
   if nextRecord == rtBinaryLibrary:
-    # Consume the peeked byte and read library
-    discard inp.read
     let library = readBinaryLibrary(inp)
     ctx.addLibrary(library)
     
