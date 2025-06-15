@@ -418,16 +418,12 @@ proc newRemotingMessage*(ctx: SerializationContext,
                         callArray: seq[RemotingValue] = @[],
                         refs: seq[ReferenceableRecord] = @[],
                         libraries: seq[BinaryLibrary] = @[]): RemotingMessage =
-  ## Creates a new RemotingMessage, assigning IDs to referencedRecords using the context
+  ## Creates a new RemotingMessage. IDs will be assigned during serialization.
   # Validate that exactly one of methodCall or methodReturn is provided
   if methodCall.isNone and methodReturn.isNone:
     raise newException(ValueError, "Must provide either method call or return")
   if methodCall.isSome and methodReturn.isSome:
     raise newException(ValueError, "Cannot have both method call and return")
-
-  # Assign IDs to all referenced records
-  for r in refs:
-    discard ctx.assignId(r)
 
   # Determine if a call array is needed based on message flags
   var needsCallArray = false
@@ -459,9 +455,10 @@ proc newRemotingMessage*(ctx: SerializationContext,
       )
     )
     var refRecord = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
-    rootId = ctx.assignId(refRecord)
-    refRecord.arrayRecord.arraySingleObject.arrayInfo.objectId = rootId
+    # ID will be assigned during serialization by writeReferenceable
     callArrayRef = some(refRecord)
+    # Use first available ID for rootId
+    rootId = 1
 
   # Create header with appropriate rootId and headerId
   let header = SerializationHeaderRecord(
