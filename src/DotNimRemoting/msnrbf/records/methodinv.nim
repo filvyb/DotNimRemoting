@@ -487,6 +487,8 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
   ## Uses the SerializationContext to track previously serialized objects and write
   ## MemberReference records instead of full records for objects that have been 
   ## serialized before, improving space efficiency.
+  let valuePtr = cast[pointer](value)
+  
   case value.kind
   of rvPrimitive:
     writeMemberPrimitiveTyped(outp, MemberPrimitiveTyped(
@@ -494,7 +496,6 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       value: value.primitiveVal
     ))
   of rvString:
-    let valuePtr = cast[pointer](addr value)
     if ctx.hasWrittenObject(valuePtr):
       # Object was previously serialized, write a reference instead
       let id = ctx.getWrittenObjectId(valuePtr)
@@ -519,16 +520,15 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       idRef: value.idRef
     ))
   of rvClass:
-    let classPtr = cast[pointer](addr value.classVal)
-    if ctx.hasWrittenObject(classPtr):
+    if ctx.hasWrittenObject(valuePtr):
       # Class was previously serialized, write a reference instead
-      let id = ctx.getWrittenObjectId(classPtr)
+      let id = ctx.getWrittenObjectId(valuePtr)
       writeMemberReference(outp, MemberReference(
         recordType: rtMemberReference,
         idRef: id
       ))
     else:
-      let id = assignIdForPointer(ctx, classPtr)
+      let id = assignIdForPointer(ctx, valuePtr)
 
       var memberTypeInfo: MemberTypeInfo
       let needsTypeInfo = value.classVal.record.kind in {rtClassWithMembersAndTypes, rtSystemClassWithMembersAndTypes}
@@ -606,17 +606,16 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
   of rvArray:
-    let arrayPtr = cast[pointer](addr value.arrayVal)
-    if ctx.hasWrittenObject(arrayPtr):
+    if ctx.hasWrittenObject(valuePtr):
       # Array was previously serialized, write a reference instead
-      let id = ctx.getWrittenObjectId(arrayPtr)
+      let id = ctx.getWrittenObjectId(valuePtr)
       writeMemberReference(outp, MemberReference(
         recordType: rtMemberReference,
         idRef: id
       ))
     else:
       # Assign a new ID and write the full array record
-      let id = assignIdForPointer(ctx, arrayPtr)
+      let id = assignIdForPointer(ctx, valuePtr)
       
       let arrayRecordVariant = value.arrayVal.record # This holds the specific record type
       let elements = value.arrayVal.elements
