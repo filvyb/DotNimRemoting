@@ -195,6 +195,19 @@ proc determineMemberTypeInfo*(members: seq[RemotingValue]): MemberTypeInfo =
 
 
 # Reading procedures
+proc readOptimizedNulls*(inp: InputStream, recordType: RecordType): int32 =
+  ## Reads ObjectNullMultiple or ObjectNullMultiple256 and returns the null count
+  ## The recordType parameter should be the peeked record type
+  case recordType
+  of rtObjectNullMultiple:
+    let nullRecord = readObjectNullMultiple(inp)
+    return nullRecord.nullCount
+  of rtObjectNullMultiple256:
+    let nullRecord = readObjectNullMultiple256(inp)
+    return nullRecord.nullCount.int32
+  else:
+    raise newException(IOError, "Expected ObjectNullMultiple or ObjectNullMultiple256 record type, got: " & $recordType)
+
 proc readValueWithCode*(inp: InputStream): ValueWithCode =
   ## Reads ValueWithCode structure from stream
   if not inp.readable:
@@ -357,20 +370,12 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     var count = 0
     while count < arrayRecord.arrayInfo.length:
       let nextType = peekRecord(inp)
-      if nextType == rtObjectNullMultiple:
-        let nullRecord = readObjectNullMultiple(inp)
-        for i in 0..<nullRecord.nullCount:
+      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+        let nullsToRead = readOptimizedNulls(inp, nextType)
+        let nullsToAdd = min(nullsToRead, arrayRecord.arrayInfo.length - count)
+        for i in 0..<nullsToAdd:
           result.arrayVal.elements.add(RemotingValue(kind: rvNull))
-          count += 1
-          if count >= arrayRecord.arrayInfo.length:
-            break
-      elif nextType == rtObjectNullMultiple256:
-        let nullRecord = readObjectNullMultiple256(inp)
-        for i in 0..<nullRecord.nullCount.int32:
-          result.arrayVal.elements.add(RemotingValue(kind: rvNull))
-          count += 1
-          if count >= arrayRecord.arrayInfo.length:
-            break
+        count += nullsToAdd
       else:
         result.arrayVal.elements.add(readRemotingValue(inp))
         count += 1
@@ -396,15 +401,9 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       var count = 0
       while count < totalElements:
         let nextType = peekRecord(inp)
-        if nextType == rtObjectNullMultiple:
-          let nullRecord = readObjectNullMultiple(inp)
-          let nullsToAdd = min(nullRecord.nullCount, totalElements - count)
-          for i in 0..<nullsToAdd:
-            elements.add(RemotingValue(kind: rvNull))
-          count += nullsToAdd
-        elif nextType == rtObjectNullMultiple256:
-          let nullRecord = readObjectNullMultiple256(inp)
-          let nullsToAdd = min(nullRecord.nullCount.int32, totalElements - count)
+        if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+          let nullsToRead = readOptimizedNulls(inp, nextType)
+          let nullsToAdd = min(nullsToRead, totalElements - count)
           for i in 0..<nullsToAdd:
             elements.add(RemotingValue(kind: rvNull))
           count += nullsToAdd
