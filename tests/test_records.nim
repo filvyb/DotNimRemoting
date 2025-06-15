@@ -890,11 +890,14 @@ suite "BinaryLibrary in RemotingMessage Tests":
       ),
       libraryId: 1  # References the library
     )
-    let refRecord = ReferenceableRecord(
-      kind: rtClassWithMembersAndTypes,
-      classRecord: ClassRecord(
-        kind: rtClassWithMembersAndTypes,
-        classWithMembersAndTypes: classRecord
+    let refRecord = RemotingValue(
+      kind: rvClass,
+      classVal: ClassValue(
+        record: ClassRecord(
+          kind: rtClassWithMembersAndTypes,
+          classWithMembersAndTypes: classRecord
+        ),
+        members: @[RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "test_field_value"))]
       )
     )
     
@@ -913,10 +916,7 @@ suite "BinaryLibrary in RemotingMessage Tests":
     let valueWithMembers = RemotingValue(
       kind: rvClass,
       classVal: ClassValue(
-        record: context.ClassRecord(
-          kind: rtClassWithMembersAndTypes,
-          classWithMembersAndTypes: msg.referencedRecords[0].classRecord.classWithMembersAndTypes
-        ),
+        record: msg.referencedRecords[0].classVal.record,
         members: @[
           RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "test value"))
         ]
@@ -943,8 +943,8 @@ suite "BinaryLibrary in RemotingMessage Tests":
     # Find the class record and verify it
     var foundClassRecord = false
     for record in deserialized.referencedRecords:
-      if record.kind == rtClassWithMembersAndTypes:
-        check record.classRecord.classWithMembersAndTypes.libraryId == 1
+      if record.kind == rvClass and record.classVal.record.kind == rtClassWithMembersAndTypes:
+        check record.classVal.record.classWithMembersAndTypes.libraryId == 1
         foundClassRecord = true
         break
     
@@ -1006,20 +1006,12 @@ suite "SerializationContext Tests":
   test "SerializationContext assigns unique IDs":
     let ctx = newSerializationContext()
     
-    # Create two different records as BinaryObjectString
-    let str1 = BinaryObjectString(
-      recordType: rtBinaryObjectString,
-      value: LengthPrefixedString(value: "String 1")
-    )
-    let record1 = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: str1)
-    let id1 = ctx.assignId(record1)
+    # Create two different RemotingValue objects
+    let val1 = RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "String 1"))
+    let val2 = RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "String 2"))
     
-    let str2 = BinaryObjectString(
-      recordType: rtBinaryObjectString,
-      value: LengthPrefixedString(value: "String 2")
-    )
-    let record2 = ReferenceableRecord(kind: rtBinaryObjectString, stringRecord: str2)
-    let id2 = ctx.assignId(record2)
+    let id1 = ctx.assignIdForPointer(cast[pointer](val1))
+    let id2 = ctx.assignIdForPointer(cast[pointer](val2))
     
     check:
       id1 != id2
@@ -1029,25 +1021,24 @@ suite "SerializationContext Tests":
   test "SerializationContext ensures consistent IDs for same record":
     let ctx = newSerializationContext()
     
-    # Create a record and wrap it
-    let array = ArraySingleObject(
-      recordType: rtArraySingleObject,
-      arrayInfo: ArrayInfo(length: 3)
-    )
+    # Create a RemotingValue array
     let arrayRecord = ArrayRecord(
       kind: rtArraySingleObject, 
-      arraySingleObject: array
+      arraySingleObject: ArraySingleObject(
+        recordType: rtArraySingleObject,
+        arrayInfo: ArrayInfo(length: 3)
+      )
     )
-    let record = ReferenceableRecord(
-      kind: rtArraySingleObject, 
-      arrayRecord: arrayRecord
-    )
+    let record = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: arrayRecord,
+      elements: @[]
+    ))
     
     # First assign ID
-    let id1 = ctx.assignId(record)
+    let id1 = ctx.assignIdForPointer(cast[pointer](record))
     
-    # Request ID again - should return the same ID
-    let id2 = ctx.assignId(record)
+    # Request ID again - should return the same ID  
+    let id2 = ctx.assignIdForPointer(cast[pointer](record))
     
     check:
       id1 == id2

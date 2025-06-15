@@ -269,15 +269,9 @@ proc classWithMembersAndTypes*(ctx: SerializationContext, className: string,
     libraryId: libraryId
   )
   
-  # Create and register with context to assign IDs
-  let refRecord = ReferenceableRecord(
-    kind: rtClassWithMembersAndTypes,
-    classRecord: ClassRecord(
-      kind: rtClassWithMembersAndTypes,
-      classWithMembersAndTypes: result
-    )
-  )
-  discard ctx.assignId(refRecord) # Sets classInfo.objectId
+  # Assign ID directly to the class record
+  result.classInfo.objectId = ctx.nextId
+  ctx.nextId += 1
 
 
 #
@@ -293,14 +287,9 @@ proc arraySingleObject*(ctx: SerializationContext, length: int): ArraySingleObje
     )
   )
   
-  let refRecord = ReferenceableRecord(
-    kind: rtArraySingleObject, 
-    arrayRecord: ArrayRecord(
-      kind: rtArraySingleObject, 
-      arraySingleObject: result
-    )
-  )
-  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+  # Assign ID directly to the array record
+  result.arrayInfo.objectId = ctx.nextId
+  ctx.nextId += 1
 
 
 proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
@@ -317,14 +306,9 @@ proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
     primitiveType: primitiveType
   )
   
-  let refRecord = ReferenceableRecord(
-    kind: rtArraySinglePrimitive, 
-    arrayRecord: ArrayRecord(
-      kind: rtArraySinglePrimitive, 
-      arraySinglePrimitive: result
-    )
-  )
-  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+  # Assign ID directly to the array record
+  result.arrayInfo.objectId = ctx.nextId
+  ctx.nextId += 1
 
 
 proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleString =
@@ -336,14 +320,9 @@ proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleStri
     )
   )
   
-  let refRecord = ReferenceableRecord(
-    kind: rtArraySingleString, 
-    arrayRecord: ArrayRecord(
-      kind: rtArraySingleString, 
-      arraySingleString: result
-    )
-  )
-  discard ctx.assignId(refRecord) # Sets arrayInfo.objectId
+  # Assign ID directly to the array record
+  result.arrayInfo.objectId = ctx.nextId
+  ctx.nextId += 1
 
 
 #
@@ -357,8 +336,6 @@ proc binaryObjectString*(ctx: SerializationContext, value: string): BinaryObject
     value: LengthPrefixedString(value: value)
   )
   
-  let refRecord = ReferenceableRecord(
-    kind: rtBinaryObjectString,
-    stringRecord: result
-  )
-  discard ctx.assignId(refRecord) # Sets objectId
+  # Assign ID directly to the string record
+  result.objectId = ctx.nextId
+  ctx.nextId += 1

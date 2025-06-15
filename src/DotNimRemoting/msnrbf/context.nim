@@ -3,23 +3,9 @@ import hashes
 import enums
 import records/arrays
 import records/class
-import records/member
 import records/serialization
 
 type
-  ReferenceableRecord* = ref object
-    ## Base type for records that can be referenced
-    ## Classes/Arrays/BinaryObjectString
-    case kind*: RecordType
-    of rtClassWithId..rtClassWithMembersAndTypes:
-      classRecord*: ClassRecord # Any class record variant
-    of rtBinaryArray..rtArraySingleString:  
-      arrayRecord*: ArrayRecord # Any array record variant
-    of rtBinaryObjectString:
-      stringRecord*: BinaryObjectString
-    else:
-      discard
-
   ClassRecord* = ref object
     ## Union of all possible class records
     case kind*: RecordType
@@ -52,14 +38,8 @@ type
 
   ReferenceContext* = ref object
     ## Tracks object references during deserialization
-    objects: Table[int32, ReferenceableRecord] # Maps object IDs to records
     libraries*: Table[int32, BinaryLibrary]     # Maps library IDs to libraries
 
-proc addReference*(ctx: ReferenceContext, id: int32, record: ReferenceableRecord) =
-  ## Track a new object reference
-  if id in ctx.objects:
-    raise newException(IOError, "Duplicate object ID: " & $id)
-  ctx.objects[id] = record
 
 proc addLibrary*(ctx: ReferenceContext, lib: BinaryLibrary) =
   ## Track a new library reference
@@ -67,11 +47,6 @@ proc addLibrary*(ctx: ReferenceContext, lib: BinaryLibrary) =
     raise newException(IOError, "Duplicate library ID: " & $lib.libraryId)
   ctx.libraries[lib.libraryId] = lib
 
-proc getReference*(ctx: ReferenceContext, id: int32): ReferenceableRecord =
-  ## Look up referenced object 
-  if id notin ctx.objects:
-    raise newException(IOError, "Missing object reference: " & $id)
-  result = ctx.objects[id]
 
 proc getLibrary*(ctx: ReferenceContext, id: int32): BinaryLibrary =
   ## Look up referenced library
@@ -81,15 +56,9 @@ proc getLibrary*(ctx: ReferenceContext, id: int32): BinaryLibrary =
 
 proc newReferenceContext*(): ReferenceContext =
   ReferenceContext(
-    objects: initTable[int32, ReferenceableRecord](),
     libraries: initTable[int32, BinaryLibrary]()
   )
 
-proc hash*(x: ReferenceableRecord): Hash =
-  ## Custom hash function for ReferenceableRecord.
-  ## Using the object's memory address as hash allows us to compare
-  ## records by reference identity rather than content
-  result = hash(cast[pointer](x))
 
 type
   SerializationContext* = ref object
@@ -107,8 +76,7 @@ proc newSerializationContext*(): SerializationContext =
   )
 
 proc `$`*(ctx: ReferenceContext): string =
-  result = "ReferenceContext(" & $ctx.objects.len() &
-               " objects, " & $ctx.libraries.len() & " libraries)"
+  result = "ReferenceContext(" & $ctx.libraries.len() & " libraries)"
 
 proc `$`*(ctx: SerializationContext): string =
   result = "SerializationContext(\n" &
@@ -157,54 +125,6 @@ proc setWrittenObjectId*(ctx: SerializationContext, obj: pointer, id: int32) =
   let key = cast[int](obj)
   ctx.writtenObjects[key] = id
 
-proc assignId*(ctx: SerializationContext, record: ReferenceableRecord): int32 =
-  ## Assigns a unique ID to a ReferenceableRecord using pointer-based tracking.
-  ## Sets the inner objectId and returns the assigned or existing ID.
-  ## This only assigns IDs, doesn't mark as written.
-  let recordPtr = cast[pointer](record)
-  
-  if ctx.hasAssignedId(recordPtr):
-    return ctx.getAssignedId(recordPtr)
-  
-  # Assign new ID and increment counter
-  let id = ctx.nextId
-  ctx.nextId += 1
-  ctx.setAssignedId(recordPtr, id)
-  
-  # Set the objectId in the inner record based on kind
-  case record.kind
-  of rtClassWithId..rtClassWithMembersAndTypes:
-    case record.classRecord.kind
-    of rtClassWithId:
-      record.classRecord.classWithId.objectId = id
-    of rtSystemClassWithMembers:
-      record.classRecord.systemClassWithMembers.classInfo.objectId = id
-    of rtClassWithMembers:
-      record.classRecord.classWithMembers.classInfo.objectId = id
-    of rtSystemClassWithMembersAndTypes:
-      record.classRecord.systemClassWithMembersAndTypes.classInfo.objectId = id
-    of rtClassWithMembersAndTypes:
-      record.classRecord.classWithMembersAndTypes.classInfo.objectId = id
-    else:
-      discard  # Unreachable due to outer case constraint
-  of rtBinaryArray..rtArraySingleString:
-    case record.arrayRecord.kind
-    of rtBinaryArray:
-      record.arrayRecord.binaryArray.objectId = id
-    of rtArraySinglePrimitive:
-      record.arrayRecord.arraySinglePrimitive.arrayInfo.objectId = id
-    of rtArraySingleObject:
-      record.arrayRecord.arraySingleObject.arrayInfo.objectId = id
-    of rtArraySingleString:
-      record.arrayRecord.arraySingleString.arrayInfo.objectId = id
-    else:
-      discard  # Unreachable due to outer case constraint
-  of rtBinaryObjectString:
-    record.stringRecord.objectId = id
-  else:
-    raise newException(ValueError, "Invalid ReferenceableRecord kind: " & $record.kind)
-  
-  return id
 
 proc assignIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
   ## Assigns the next available ID for a given object pointer if not already assigned.

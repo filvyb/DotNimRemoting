@@ -1,7 +1,7 @@
 import faststreams/[inputs, outputs]
 import enums
-import records/[arrays, class, member, methodinv, serialization]
-import options, strutils, tables
+import records/[arrays, methodinv, serialization]
+import options, strutils
 import context
 
 type
@@ -13,8 +13,7 @@ type
     methodCall*: Option[BinaryMethodCall]        # Required method call
     methodReturn*: Option[BinaryMethodReturn]    # Or method return
     methodCallArray*: seq[RemotingValue]   # Optional method call array
-    referencedRecords*: seq[ReferenceableRecord] # Optional referenced records
-    callArrayRecord*: Option[ReferenceableRecord] # Optional call array record
+    referencedRecords*: seq[RemotingValue] # Optional referenced records
     tail*: MessageEnd                      # Required message end marker
 
 # String representations
@@ -52,63 +51,6 @@ proc `$`*(msg: RemotingMessage): string =
   return parts.join("\n")
 
 
-proc readReferenceable*(inp: InputStream, ctx: ReferenceContext): ReferenceableRecord =
-  ## Reads a referenceable record (Classes/Arrays/BinaryObjectString)
-  ## Section 2.7 grammar: referenceable = Classes/Arrays/BinaryObjectString
-
-  # First try reading library reference that may precede any referenceable
-  let recordType = peekRecord(inp)
-  if recordType == rtBinaryLibrary:
-    let library = readBinaryLibrary(inp)
-    ctx.addLibrary(library)
-
-  result = ReferenceableRecord(kind: recordType)
-
-  # Handle based on record type following grammar rules
-  case recordType:
-  of rtClassWithId..rtClassWithMembersAndTypes:
-    result.classRecord = ClassRecord(kind: recordType)
-    case recordType:
-    of rtClassWithId:
-      result.classRecord.classWithId = readClassWithId(inp)
-      ctx.addReference(result.classRecord.classWithId.objectId, result)
-    of rtSystemClassWithMembers:
-      result.classRecord.systemClassWithMembers = readSystemClassWithMembers(inp)
-      ctx.addReference(result.classRecord.systemClassWithMembers.classInfo.objectId, result)  
-    of rtClassWithMembers:
-      result.classRecord.classWithMembers = readClassWithMembers(inp)
-      ctx.addReference(result.classRecord.classWithMembers.classInfo.objectId, result)
-    of rtSystemClassWithMembersAndTypes:
-      result.classRecord.systemClassWithMembersAndTypes = readSystemClassWithMembersAndTypes(inp)
-      ctx.addReference(result.classRecord.systemClassWithMembersAndTypes.classInfo.objectId, result)
-    of rtClassWithMembersAndTypes:
-      result.classRecord.classWithMembersAndTypes = readClassWithMembersAndTypes(inp)
-      ctx.addReference(result.classRecord.classWithMembersAndTypes.classInfo.objectId, result)
-    else: discard
-
-  of rtBinaryArray..rtArraySingleString:
-    result.arrayRecord = ArrayRecord(kind: recordType)
-    case recordType:
-    of rtBinaryArray:
-      result.arrayRecord.binaryArray = readBinaryArray(inp)
-      ctx.addReference(result.arrayRecord.binaryArray.objectId, result)
-    of rtArraySinglePrimitive:  
-      result.arrayRecord.arraySinglePrimitive = readArraySinglePrimitive(inp)
-      ctx.addReference(result.arrayRecord.arraySinglePrimitive.arrayInfo.objectId, result)
-    of rtArraySingleObject:
-      result.arrayRecord.arraySingleObject = readArraySingleObject(inp)
-      ctx.addReference(result.arrayRecord.arraySingleObject.arrayInfo.objectId, result)
-    of rtArraySingleString:
-      result.arrayRecord.arraySingleString = readArraySingleString(inp) 
-      ctx.addReference(result.arrayRecord.arraySingleString.arrayInfo.objectId, result)
-    else: discard
-
-  of rtBinaryObjectString:
-    result.stringRecord = readBinaryObjectString(inp)
-    ctx.addReference(result.stringRecord.objectId, result)
-
-  else:
-    raise newException(IOError, "Invalid referenceable record type: " & $recordType)
 
 proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: BinaryMethodCall, array: seq[RemotingValue]] =
   ## Reads a method call + optional array
@@ -219,12 +161,19 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
     if nextType in {rtMethodCall, rtMethodReturn}:
       break
       
+    # Handle BinaryLibrary records
+    if nextType == rtBinaryLibrary:
+      let library = readBinaryLibrary(inp)
+      ctx.addLibrary(library)
+      result.libraries.add(library)
+      continue
+      
     # Unexpected end
     if nextType == rtMessageEnd:
       raise newException(IOError, "Unexpected MessageEnd before method")
       
-    # Read referenceable record
-    result.referencedRecords.add(readReferenceable(inp, ctx))
+    # Read referenceable record as RemotingValue
+    result.referencedRecords.add(readRemotingValue(inp))
 
   # Read required method call or return
   if not inp.readable:
@@ -252,91 +201,24 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
       discard inp.read # Consume the record type
       result.tail = MessageEnd(recordType: rtMessageEnd)
       
-      # Extract libraries from the context and add them to the message
-      for id, lib in ctx.libraries.pairs:
-        result.libraries.add(lib)
+      # Libraries are already added to result.libraries directly during reading
       
       return
-    # Read referenceable record
-    result.referencedRecords.add(readReferenceable(inp, ctx))
+      
+    # Handle BinaryLibrary records
+    if nextType == rtBinaryLibrary:
+      let library = readBinaryLibrary(inp)
+      ctx.addLibrary(library)
+      result.libraries.add(library)
+      continue
+      
+    # Read referenceable record as RemotingValue
+    result.referencedRecords.add(readRemotingValue(inp))
 
   raise newException(IOError, "Missing MessageEnd")
 
-proc writeReferenceable*(outp: OutputStream, record: ReferenceableRecord, ctx: SerializationContext) = 
-  ## Writes a referenceable record (Classes/Arrays/BinaryObjectString)
-  ## Section 2.7 grammar: referenceable = Classes/Arrays/BinaryObjectString
-  ## Uses SerializationContext for consistent ID management and reference detection
 
-  # Check if this record was already written by checking the SerializationContext
-  let recordPtr = cast[pointer](record)
-  if ctx.hasWrittenObject(recordPtr):
-    # Record was previously serialized, write a reference instead
-    let id = ctx.getWrittenObjectId(recordPtr)
-    writeMemberReference(outp, MemberReference(
-      recordType: rtMemberReference,
-      idRef: id
-    ))
-    return
-
-  # First time writing this record - get or assign ID and mark as written
-  var id: int32
-  if ctx.hasAssignedId(recordPtr):
-    # Record already has an ID assigned (e.g., from message construction)
-    id = ctx.getAssignedId(recordPtr)
-  else:
-    # Assign new ID
-    id = ctx.nextId
-    ctx.nextId += 1
-    ctx.setAssignedId(recordPtr, id)
-  
-  # Mark as written now
-  ctx.setWrittenObjectId(recordPtr, id)
-  
-  # Ensure the inner record has the correct ID set before writing
-  case record.kind
-  of rtClassWithId..rtClassWithMembersAndTypes:
-    case record.classRecord.kind
-    of rtClassWithId:
-      record.classRecord.classWithId.objectId = id
-      writeClassWithId(outp, record.classRecord.classWithId)
-    of rtSystemClassWithMembers:
-      record.classRecord.systemClassWithMembers.classInfo.objectId = id
-      writeSystemClassWithMembers(outp, record.classRecord.systemClassWithMembers)
-    of rtClassWithMembers:
-      record.classRecord.classWithMembers.classInfo.objectId = id
-      writeClassWithMembers(outp, record.classRecord.classWithMembers)
-    of rtSystemClassWithMembersAndTypes:
-      record.classRecord.systemClassWithMembersAndTypes.classInfo.objectId = id
-      writeSystemClassWithMembersAndTypes(outp, record.classRecord.systemClassWithMembersAndTypes)
-    of rtClassWithMembersAndTypes:
-      record.classRecord.classWithMembersAndTypes.classInfo.objectId = id
-      writeClassWithMembersAndTypes(outp, record.classRecord.classWithMembersAndTypes)
-    else: discard
-
-  of rtBinaryArray..rtArraySingleString:
-    case record.arrayRecord.kind:
-    of rtBinaryArray:
-      record.arrayRecord.binaryArray.objectId = id
-      writeBinaryArray(outp, record.arrayRecord.binaryArray)
-    of rtArraySinglePrimitive:
-      record.arrayRecord.arraySinglePrimitive.arrayInfo.objectId = id
-      writeArraySinglePrimitive(outp, record.arrayRecord.arraySinglePrimitive)
-    of rtArraySingleObject:
-      record.arrayRecord.arraySingleObject.arrayInfo.objectId = id
-      writeArraySingleObject(outp, record.arrayRecord.arraySingleObject)
-    of rtArraySingleString:
-      record.arrayRecord.arraySingleString.arrayInfo.objectId = id
-      writeArraySingleString(outp, record.arrayRecord.arraySingleString)
-    else: discard
-
-  of rtBinaryObjectString:
-    record.stringRecord.objectId = id
-    writeBinaryObjectString(outp, record.stringRecord)
-
-  else:
-    raise newException(ValueError, "Invalid referenceable record type: " & $record.kind)
-
-proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], callArrayRecord: Option[ReferenceableRecord], ctx: SerializationContext) =
+proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a method call and its optional call array, using the provided callArrayRecord if needed
   # Write the BinaryMethodCall record to the output stream
   writeBinaryMethodCall(outp, call)
@@ -347,18 +229,24 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
      MessageFlag.ContextInArray in call.messageEnum or
      MessageFlag.MethodSignatureInArray in call.messageEnum or
      MessageFlag.GenericMethod in call.messageEnum:
-    # Validate that a call array record and elements are provided
-    if callArrayRecord.isNone or array.len == 0:
+    # Validate that array elements are provided
+    if array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
     
-    # Write the call array record (e.g., ArraySingleObject)
-    writeReferenceable(outp, callArrayRecord.get, ctx)
-    
-    # Serialize each element in the call array
-    for value in array:
-      writeRemotingValue(outp, value, ctx)
+    # Create and write the array record containing the elements
+    let arrayRecord = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(
+        kind: rtArraySingleObject,
+        arraySingleObject: ArraySingleObject(
+          recordType: rtArraySingleObject,
+          arrayInfo: ArrayInfo(length: array.len.int32)
+        )
+      ),
+      elements: array
+    ))
+    writeRemotingValue(outp, arrayRecord, ctx)
 
-proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], callArrayRecord: Option[ReferenceableRecord], ctx: SerializationContext) =
+proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a BinaryMethodReturn record and its optional call array to the output stream
   writeBinaryMethodReturn(outp, ret)
 
@@ -367,16 +255,22 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
      MessageFlag.ArgsInArray in ret.messageEnum or 
      MessageFlag.ContextInArray in ret.messageEnum or 
      MessageFlag.ExceptionInArray in ret.messageEnum:
-    # Validate that a call array is provided when expected
-    if callArrayRecord.isNone or array.len == 0:
+    # Validate that array elements are provided
+    if array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
     
-    # Write the call array record (e.g., ArraySingleObject)
-    writeReferenceable(outp, callArrayRecord.get, ctx)
-    
-    # Write each RemotingValue in the array
-    for value in array:
-      writeRemotingValue(outp, value, ctx)
+    # Create and write the array record containing the elements
+    let arrayRecord = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(
+        kind: rtArraySingleObject,
+        arraySingleObject: ArraySingleObject(
+          recordType: rtArraySingleObject,
+          arrayInfo: ArrayInfo(length: array.len.int32)
+        )
+      ),
+      elements: array
+    ))
+    writeRemotingValue(outp, arrayRecord, ctx)
 
 proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: SerializationContext) =
   ## Writes a complete remoting message, using the context for ID management.
@@ -401,13 +295,13 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
 
   # Write method call or method return, including the call array if present
   if msg.methodCall.isSome:
-    writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray, msg.callArrayRecord, ctx)
+    writeMethodCall(outp, msg.methodCall.get, msg.methodCallArray, ctx)
   elif msg.methodReturn.isSome:
-    writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, msg.callArrayRecord, ctx)
+    writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, ctx)
   
   # Write referenced records (e.g., classes, arrays, strings)
   for record in msg.referencedRecords:
-    writeReferenceable(outp, record, ctx)
+    writeRemotingValue(outp, record, ctx)
 
   # Write the message end
   writeMessageEnd(outp, msg.tail)
@@ -416,7 +310,7 @@ proc newRemotingMessage*(ctx: SerializationContext,
                         methodCall: Option[BinaryMethodCall] = none(BinaryMethodCall),
                         methodReturn: Option[BinaryMethodReturn] = none(BinaryMethodReturn),
                         callArray: seq[RemotingValue] = @[],
-                        refs: seq[ReferenceableRecord] = @[],
+                        refs: seq[RemotingValue] = @[],
                         libraries: seq[BinaryLibrary] = @[]): RemotingMessage =
   ## Creates a new RemotingMessage. IDs will be assigned during serialization.
   # Validate that exactly one of methodCall or methodReturn is provided
@@ -441,22 +335,11 @@ proc newRemotingMessage*(ctx: SerializationContext,
                      MessageFlag.ContextInArray in ret.messageEnum or
                      MessageFlag.ExceptionInArray in ret.messageEnum
 
-  # Create call array record if needed
-  var callArrayRef = none(ReferenceableRecord)
+  # Determine rootId based on whether we need a call array
   var rootId: int32 = 0
   if needsCallArray:
     if callArray.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
-    let arrayRecord = ArrayRecord(
-      kind: rtArraySingleObject,
-      arraySingleObject: ArraySingleObject(
-        recordType: rtArraySingleObject,
-        arrayInfo: ArrayInfo(length: callArray.len.int32)
-      )
-    )
-    var refRecord = ReferenceableRecord(kind: rtArraySingleObject, arrayRecord: arrayRecord)
-    # ID will be assigned during serialization by writeReferenceable
-    callArrayRef = some(refRecord)
     # Use first available ID for rootId
     rootId = 1
 
@@ -476,7 +359,6 @@ proc newRemotingMessage*(ctx: SerializationContext,
     methodCall: methodCall,
     methodReturn: methodReturn,
     methodCallArray: callArray,
-    callArrayRecord: callArrayRef,
     referencedRecords: refs,
     tail: MessageEnd(recordType: rtMessageEnd)
   )
