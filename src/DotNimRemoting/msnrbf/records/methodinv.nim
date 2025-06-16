@@ -276,7 +276,7 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
     result.args = readArrayOfValueWithCode(inp)
 
 proc readRemotingValue*(inp: InputStream): RemotingValue =
-  ## Reads any serializable object from the input stream into a RemotingValue
+  ## Reads any member reference and referenceables from the input stream into a RemotingValue
   let recordType = peekRecord(inp)
   case recordType
   of rtMemberPrimitiveTyped:
@@ -350,10 +350,19 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     let length = arrayRecord.arrayInfo.length
     var elements = newSeq[RemotingValue]()    # Initialize empty sequence
 
-    for i in 0..<length:
-      let value = readLengthPrefixedString(inp)
-      let rv = RemotingValue(kind: rvString, stringVal: value)
-      elements.add(rv)
+    var count = 0
+    while count < length:
+      let nextType = peekRecord(inp)
+      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+        let nullsToRead = readOptimizedNulls(inp, nextType)
+        let nullsToAdd = min(nullsToRead, length - count)
+        for i in 0..<nullsToAdd:
+          elements.add(RemotingValue(kind: rvNull))
+        count += nullsToAdd
+      else:
+        # Read the element as a full record (BinaryObjectString, MemberReference, or ObjectNull)
+        elements.add(readRemotingValue(inp))
+        count += 1
 
     # Construct array result
     result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
@@ -487,6 +496,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
   ## Uses the SerializationContext to track previously serialized objects and write
   ## MemberReference records instead of full records for objects that have been 
   ## serialized before, improving space efficiency.
+  ## Writes both member reference and referenceables
   let valuePtr = cast[pointer](value)
   
   case value.kind
@@ -674,7 +684,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
                writeOptimizedNulls(outp, nullCount)
                nullCount = 0
              # Write the non-null element (String or Reference)
-             if elem.kind notin {rvString, rvReference}: # Validation added
+             if elem.kind notin {rvString, rvReference, rvNull}:
                 raise newException(ValueError, "Invalid element type for ArraySingleString: " & $elem.kind)
              writeRemotingValue(outp, elem, ctx)
         # Write any trailing nulls
