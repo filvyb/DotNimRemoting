@@ -161,8 +161,6 @@ suite "MSNRBF Helpers":
     check(deserializedCall.args[1].value.doubleVal == 3.14)
 
   test "Class construction helpers":
-    let ctx = newSerializationContext()
-    
     # Create member info
     let memberInfos = @[
       ("Street", btString, AdditionalTypeInfo(kind: btString)),
@@ -171,7 +169,7 @@ suite "MSNRBF Helpers":
       ("Zip", btString, AdditionalTypeInfo(kind: btString))
     ]
     
-    let cls = classWithMembersAndTypes(ctx, "TestNamespace.Address", 1, memberInfos)
+    let cls = classWithMembersAndTypes("TestNamespace.Address", 1, memberInfos)
     
     check(cls.recordType == rtClassWithMembersAndTypes)
     check(cls.classInfo.memberCount == 4)
@@ -185,36 +183,32 @@ suite "MSNRBF Helpers":
     check(cls.classInfo.name.value == "TestNamespace.Address")
 
   test "Array construction helpers":
-    let ctx = newSerializationContext()
-    
     # Test single object array
-    let objArray = arraySingleObject(ctx, 5)
+    let objArray = arraySingleObject(5)
     check(objArray.recordType == rtArraySingleObject)
     check(objArray.arrayInfo.length == 5)
     
     # Test single primitive array
-    let primArray = arraySinglePrimitive(ctx, 10, ptInt32)
+    let primArray = arraySinglePrimitive(10, ptInt32)
     check(primArray.recordType == rtArraySinglePrimitive)
     check(primArray.arrayInfo.length == 10)
     check(primArray.primitiveType == ptInt32)
     
     # Test single string array
-    let strArray = arraySingleString(ctx, 3)
+    let strArray = arraySingleString(3)
     check(strArray.recordType == rtArraySingleString)
     check(strArray.arrayInfo.length == 3)
     
     # Should throw when creating primitive array with invalid type
     expect ValueError:
-      discard arraySinglePrimitive(ctx, 5, ptString)
+      discard arraySinglePrimitive(5, ptString)
     
     expect ValueError:
-      discard arraySinglePrimitive(ctx, 5, ptNull)
+      discard arraySinglePrimitive(5, ptNull)
 
   test "Object construction helpers":
-    let ctx = newSerializationContext()
-    
     # Test BinaryObjectString
-    let str = binaryObjectString(ctx, "Test string")
+    let str = binaryObjectString("Test string")
     check(str.recordType == rtBinaryObjectString)
     check(str.value.value == "Test string")
 
@@ -226,7 +220,6 @@ suite "MSNRBF Helpers":
       height: float64
       isActive: bool
     
-    let ctx = newSerializationContext()
     let person = Person(
       name: "John Doe",
       age: 30,
@@ -234,7 +227,7 @@ suite "MSNRBF Helpers":
       isActive: true
     )
     
-    let remoteValue = ctx.objectToClass(person, "TestNamespace.Person", 1)
+    let remoteValue = objectToClass(person, "TestNamespace.Person", 1)
     
     # Verify it's a class RemotingValue
     check(remoteValue.kind == rvClass)
@@ -283,12 +276,11 @@ suite "MSNRBF Helpers":
     
   test "objectToClass with default namespace and library ID":
     # Test objectToClass with default namespace and library ID
-    let ctx = newSerializationContext()
     type MyCustomType = object
       value: int32
     
     let obj = MyCustomType(value: 42)
-    let rv = ctx.objectToClass(obj)
+    let rv = objectToClass(obj)
     
     let cr = rv.classVal.record.classWithMembersAndTypes
     check(cr.classInfo.name.value == "MyCustomType")
@@ -300,7 +292,6 @@ suite "MSNRBF Helpers":
 
   test "objectToClass with various numeric types":
     # Test objectToClass with various numeric types
-    let ctx = newSerializationContext()
     type Numbers = object
       i8: int8
       u8: uint8
@@ -326,7 +317,7 @@ suite "MSNRBF Helpers":
       f64: 2.718281828
     )
     
-    let rvNum = ctx.objectToClass(numbers, "Numbers", 2)
+    let rvNum = objectToClass(numbers, "Numbers", 2)
     
     # Verify member count
     check(rvNum.classVal.members.len == 10)

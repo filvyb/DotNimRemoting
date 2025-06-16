@@ -240,7 +240,7 @@ proc deserializeRemotingMessage*(data: openArray[byte]): RemotingMessage =
 
 proc classInfo*(name: string, memberNames: seq[string]): ClassInfo =
   ## Create a ClassInfo structure without setting objectId
-  ## The objectId will be set when the containing class record is processed by SerializationContext
+  ## The objectId will be set when the containing class record is written to the stream.
   ClassInfo(
     name: LengthPrefixedString(value: name),
     memberCount: memberNames.len.int32,
@@ -248,10 +248,9 @@ proc classInfo*(name: string, memberNames: seq[string]): ClassInfo =
   )
 
 
-proc classWithMembersAndTypes*(ctx: SerializationContext, className: string, 
-                                    libraryId: int32,
+proc classWithMembersAndTypes*(className: string, libraryId: int32,
                                     members: seq[(string, BinaryType, AdditionalTypeInfo)]): ClassWithMembersAndTypes =
-  ## Create a ClassWithMembersAndTypes record using context for ID assignment
+  ## Create a ClassWithMembersAndTypes record
   
   # Create member names list and type info
   var memberNames: seq[string]
@@ -272,15 +271,10 @@ proc classWithMembersAndTypes*(ctx: SerializationContext, className: string,
     ),
     libraryId: libraryId
   )
-  
-  # Assign ID directly to the class record
-  result.classInfo.objectId = ctx.nextId
-  ctx.nextId += 1
 
 
-proc systemClassWithMembersAndTypes*(ctx: SerializationContext, className: string,
-                                           members: seq[(string, BinaryType, AdditionalTypeInfo)]): SystemClassWithMembersAndTypes =
-  ## Create a SystemClassWithMembersAndTypes record using context for ID assignment
+proc systemClassWithMembersAndTypes*(className: string, members: seq[(string, BinaryType, AdditionalTypeInfo)]): SystemClassWithMembersAndTypes =
+  ## Create a SystemClassWithMembersAndTypes record
   ## For system library classes, so no library ID needed
   
   # Create member names list and type info
@@ -301,10 +295,6 @@ proc systemClassWithMembersAndTypes*(ctx: SerializationContext, className: strin
       additionalInfos: additionalInfos
     )
   )
-  
-  # Assign ID directly to the class record
-  result.classInfo.objectId = ctx.nextId
-  ctx.nextId += 1
 
 
 proc classWithMembersAndTypesToSystemClass*(value: RemotingValue, newClassName: string = ""): RemotingValue =
@@ -357,8 +347,7 @@ proc classWithMembersAndTypesToSystemClass*(value: RemotingValue, newClassName: 
   )
 
 
-proc objectToClass*[T: object](ctx: SerializationContext, obj: T, 
-                               className: string = "", libraryId: int32 = 0): RemotingValue =
+proc objectToClass*[T: object](obj: T, className: string = "", libraryId: int32 = 0): RemotingValue =
   ## Converts a Nim object to a RemotingValue containing ClassWithMembersAndTypes
   ## Only supports primitive types and strings for now.
   ## If className is not provided, uses the type name
@@ -369,7 +358,7 @@ proc objectToClass*[T: object](ctx: SerializationContext, obj: T,
   ##     age: int32
   ##   
   ##   let person = Person(name: "John", age: 30)
-  ##   let remoteValue = ctx.objectToClass(person, "MyNamespace.Person", 1)
+  ##   let remoteValue = objectToClass(person, "MyNamespace.Person", 1)
   
   # Determine class name
   let actualClassName = if className.len > 0: className else: $T
@@ -429,7 +418,7 @@ proc objectToClass*[T: object](ctx: SerializationContext, obj: T,
       memberValues.add(RemotingValue(kind: rvNull))
   
   # Create the ClassWithMembersAndTypes record
-  let classRecord = ctx.classWithMembersAndTypes(actualClassName, libraryId, memberInfos)
+  let classRecord = classWithMembersAndTypes(actualClassName, libraryId, memberInfos)
   
   # Create ClassRecord wrapper
   let classRecordWrapper = ClassRecord(
@@ -453,23 +442,19 @@ proc objectToClass*[T: object](ctx: SerializationContext, obj: T,
 # Array construction helpers
 #
 
-proc arraySingleObject*(ctx: SerializationContext, length: int): ArraySingleObject =
-  ## Create a single-dimensional object array, using context for ID assignment
+proc arraySingleObject*(length: int): ArraySingleObject =
+  ## Create a single-dimensional object array
   result = ArraySingleObject(
     recordType: rtArraySingleObject,
     arrayInfo: ArrayInfo(
       length: length.int32
     )
   )
-  
-  # Assign ID directly to the array record
-  result.arrayInfo.objectId = ctx.nextId
-  ctx.nextId += 1
 
 
-proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
+proc arraySinglePrimitive*(length: int,
                                primitiveType: PrimitiveType): ArraySinglePrimitive =
-  ## Create a single-dimensional primitive array using context for ID assignment
+  ## Create a single-dimensional primitive array
   if primitiveType in {ptNull, ptString}:
     raise newException(ValueError, "Invalid primitive array type: " & $primitiveType)
     
@@ -480,37 +465,25 @@ proc arraySinglePrimitive*(ctx: SerializationContext, length: int,
     ),
     primitiveType: primitiveType
   )
-  
-  # Assign ID directly to the array record
-  result.arrayInfo.objectId = ctx.nextId
-  ctx.nextId += 1
 
 
-proc arraySingleString*(ctx: SerializationContext, length: int): ArraySingleString =
-  ## Create a single-dimensional string array using context for ID assignment
+proc arraySingleString*(length: int): ArraySingleString =
+  ## Create a single-dimensional string array
   result = ArraySingleString(
     recordType: rtArraySingleString,
     arrayInfo: ArrayInfo(
       length: length.int32
     )
   )
-  
-  # Assign ID directly to the array record
-  result.arrayInfo.objectId = ctx.nextId
-  ctx.nextId += 1
 
 
 #
 # Object construction helpers
 #
 
-proc binaryObjectString*(ctx: SerializationContext, value: string): BinaryObjectString =
-  ## Create a BinaryObjectString record using context for ID assignment
+proc binaryObjectString*(value: string): BinaryObjectString =
+  ## Create a BinaryObjectString record
   result = BinaryObjectString(
     recordType: rtBinaryObjectString,
     value: LengthPrefixedString(value: value)
   )
-  
-  # Assign ID directly to the string record
-  result.objectId = ctx.nextId
-  ctx.nextId += 1
