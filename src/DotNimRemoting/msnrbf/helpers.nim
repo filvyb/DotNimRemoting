@@ -15,6 +15,10 @@ proc byteValue*(value: uint8): PrimitiveValue =
   ## Create a byte primitive value
   PrimitiveValue(kind: ptByte, byteVal: value)
 
+proc sbyteValue*(value: int8): PrimitiveValue =
+  ## Create a signed byte primitive value
+  PrimitiveValue(kind: ptSByte, sbyteVal: value)
+
 proc int16Value*(value: int16): PrimitiveValue =
   ## Create an int16 primitive value
   PrimitiveValue(kind: ptInt16, int16Val: value)
@@ -347,6 +351,99 @@ proc classWithMembersAndTypesToSystemClass*(value: RemotingValue, newClassName: 
   )
   
   # Return new RemotingValue
+  result = RemotingValue(
+    kind: rvClass,
+    classVal: classValue
+  )
+
+
+proc objectToClass*[T: object](ctx: SerializationContext, obj: T, 
+                               className: string = "", libraryId: int32 = 0): RemotingValue =
+  ## Converts a Nim object to a RemotingValue containing ClassWithMembersAndTypes
+  ## Only supports primitive types and strings for now.
+  ## If className is not provided, uses the type name
+  ## 
+  ## Example:
+  ##   type Person = object
+  ##     name: string
+  ##     age: int32
+  ##   
+  ##   let person = Person(name: "John", age: 30)
+  ##   let remoteValue = ctx.objectToClass(person, "MyNamespace.Person", 1)
+  
+  # Determine class name
+  let actualClassName = if className.len > 0: className else: $T
+  
+  # Build member info and values
+  var memberInfos: seq[(string, BinaryType, AdditionalTypeInfo)]
+  var memberValues: seq[RemotingValue]
+  
+  # Iterate through object fields
+  for fieldName, fieldValue in fieldPairs(obj):
+    # Determine binary type and create RemotingValue based on field type
+    when fieldValue is string:
+      memberInfos.add((fieldName, btString, AdditionalTypeInfo()))
+      memberValues.add(RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: fieldValue)))
+    elif fieldValue is int32:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(fieldValue)))
+    elif fieldValue is int64:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt64)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: int64Value(fieldValue)))
+    elif fieldValue is float32:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptSingle)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: singleValue(fieldValue)))
+    elif fieldValue is float64:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptDouble)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: doubleValue(fieldValue)))
+    elif fieldValue is bool:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptBoolean)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: boolValue(fieldValue)))
+    elif fieldValue is DateTime:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptDateTime)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: dateTimeValue(fieldValue)))
+    elif fieldValue is char:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptChar)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: charValue(fieldValue)))
+    elif fieldValue is int8:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptSByte)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: sbyteValue(fieldValue)))
+    elif fieldValue is uint8:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptByte)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: byteValue(fieldValue)))
+    elif fieldValue is int16:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt16)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: int16Value(fieldValue)))
+    elif fieldValue is uint16:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptUInt16)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: uint16Value(fieldValue)))
+    elif fieldValue is uint32:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptUInt32)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: uint32Value(fieldValue)))
+    elif fieldValue is uint64:
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptUInt64)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: uint64Value(fieldValue)))
+    else:
+      # For unsupported types, use null
+      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptNull)))
+      memberValues.add(RemotingValue(kind: rvNull))
+  
+  # Create the ClassWithMembersAndTypes record
+  let classRecord = ctx.classWithMembersAndTypes(actualClassName, libraryId, memberInfos)
+  
+  # Create ClassRecord wrapper
+  let classRecordWrapper = ClassRecord(
+    kind: rtClassWithMembersAndTypes,
+    classWithMembersAndTypes: classRecord
+  )
+  
+  # Create ClassValue with members
+  let classValue = ClassValue(
+    record: classRecordWrapper,
+    members: memberValues
+  )
+  
+  # Return complete RemotingValue
   result = RemotingValue(
     kind: rvClass,
     classVal: classValue

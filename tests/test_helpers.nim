@@ -217,3 +217,120 @@ suite "MSNRBF Helpers":
     let str = binaryObjectString(ctx, "Test string")
     check(str.recordType == rtBinaryObjectString)
     check(str.value.value == "Test string")
+
+  test "objectToClass helper":
+    # Test converting a simple object
+    type Person = object
+      name: string
+      age: int32
+      height: float64
+      isActive: bool
+    
+    let ctx = newSerializationContext()
+    let person = Person(
+      name: "John Doe",
+      age: 30,
+      height: 175.5,
+      isActive: true
+    )
+    
+    let remoteValue = ctx.objectToClass(person, "TestNamespace.Person", 1)
+    
+    # Verify it's a class RemotingValue
+    check(remoteValue.kind == rvClass)
+    
+    # Verify the record type
+    check(remoteValue.classVal.record.kind == rtClassWithMembersAndTypes)
+    
+    # Verify class name and library ID
+    let classRecord = remoteValue.classVal.record.classWithMembersAndTypes
+    check(classRecord.classInfo.name.value == "TestNamespace.Person")
+    check(classRecord.libraryId == 1)
+    
+    # Verify member count
+    check(classRecord.classInfo.memberCount == 4)
+    check(remoteValue.classVal.members.len == 4)
+    
+    # Verify member names
+    check(classRecord.classInfo.memberNames[0].value == "name")
+    check(classRecord.classInfo.memberNames[1].value == "age")
+    check(classRecord.classInfo.memberNames[2].value == "height")
+    check(classRecord.classInfo.memberNames[3].value == "isActive")
+    
+    # Verify member types
+    check(classRecord.memberTypeInfo.binaryTypes[0] == btString)
+    check(classRecord.memberTypeInfo.binaryTypes[1] == btPrimitive)
+    check(classRecord.memberTypeInfo.binaryTypes[2] == btPrimitive)
+    check(classRecord.memberTypeInfo.binaryTypes[3] == btPrimitive)
+    
+    # Verify additional info for primitives
+    check(classRecord.memberTypeInfo.additionalInfos[1].primitiveType == ptInt32)
+    check(classRecord.memberTypeInfo.additionalInfos[2].primitiveType == ptDouble)
+    check(classRecord.memberTypeInfo.additionalInfos[3].primitiveType == ptBoolean)
+    
+    # Verify member values
+    check(remoteValue.classVal.members[0].kind == rvString)
+    check(remoteValue.classVal.members[0].stringVal.value == "John Doe")
+    
+    check(remoteValue.classVal.members[1].kind == rvPrimitive)
+    check(remoteValue.classVal.members[1].primitiveVal.int32Val == 30)
+    
+    check(remoteValue.classVal.members[2].kind == rvPrimitive)
+    check(remoteValue.classVal.members[2].primitiveVal.doubleVal == 175.5)
+    
+    check(remoteValue.classVal.members[3].kind == rvPrimitive)
+    check(remoteValue.classVal.members[3].primitiveVal.boolVal == true)
+    
+  test "objectToClass with default namespace and library ID":
+    # Test objectToClass with default namespace and library ID
+    let ctx = newSerializationContext()
+    type MyCustomType = object
+      value: int32
+    
+    let obj = MyCustomType(value: 42)
+    let rv = ctx.objectToClass(obj)
+    
+    let cr = rv.classVal.record.classWithMembersAndTypes
+    check(cr.classInfo.name.value == "MyCustomType")
+    check(cr.libraryId == 0)  # Default library ID
+    check(cr.classInfo.memberCount == 1)
+    check(cr.classInfo.memberNames[0].value == "value")
+    check(cr.memberTypeInfo.binaryTypes[0] == btPrimitive)
+    check(cr.memberTypeInfo.additionalInfos[0].primitiveType == ptInt32)
+
+  test "objectToClass with various numeric types":
+    # Test objectToClass with various numeric types
+    let ctx = newSerializationContext()
+    type Numbers = object
+      i8: int8
+      u8: uint8
+      i16: int16
+      u16: uint16
+      i32: int32
+      u32: uint32
+      i64: int64
+      u64: uint64
+      f32: float32
+      f64: float64
+    
+    let numbers = Numbers(
+      i8: -128,
+      u8: 255,
+      i16: -32768,
+      u16: 65535,
+      i32: -2147483648,
+      u32: 4294967295'u32,
+      i64: 9223372036854775807,
+      u64: 18446744073709551615'u64,
+      f32: 3.14159'f32,
+      f64: 2.718281828
+    )
+    
+    let rvNum = ctx.objectToClass(numbers, "Numbers", 2)
+    
+    # Verify member count
+    check(rvNum.classVal.members.len == 10)
+    
+    # Verify all are primitive values
+    for member in rvNum.classVal.members:
+      check(member.kind == rvPrimitive)
