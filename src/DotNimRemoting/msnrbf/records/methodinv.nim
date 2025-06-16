@@ -331,6 +331,48 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       record: ClassRecord(kind: rtClassWithId, classWithId: classRecord),
       members: @[]
     ))
+  of rtSystemClassWithMembersAndTypes:
+    let classRecord = readSystemClassWithMembersAndTypes(inp)
+    result = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtSystemClassWithMembersAndTypes, systemClassWithMembersAndTypes: classRecord),
+      members: @[]
+    ))
+    # Read members according to their declared types in MemberTypeInfo
+    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
+    for i in 0..<classRecord.classInfo.memberCount:
+      let binaryType = classRecord.memberTypeInfo.binaryTypes[i]
+      let additionalInfo = classRecord.memberTypeInfo.additionalInfos[i]
+      
+      case binaryType
+      of btPrimitive:
+        let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
+        result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
+      of btString:
+        let strValue = readLengthPrefixedString(inp)
+        result.classVal.members.add(RemotingValue(kind: rvString, stringVal: strValue))
+      of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+        # These types require reading full records
+        result.classVal.members.add(readRemotingValue(inp))
+  of rtSystemClassWithMembers:
+    let classRecord = readSystemClassWithMembers(inp)
+    result = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtSystemClassWithMembers, systemClassWithMembers: classRecord),
+      members: @[]
+    ))
+    # For SystemClassWithMembers, we don't have type info, so we must infer from context
+    # or read full records for each member
+    for i in 0..<classRecord.classInfo.memberCount:
+      result.classVal.members.add(readRemotingValue(inp))
+  of rtClassWithMembers:
+    let classRecord = readClassWithMembers(inp)
+    result = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtClassWithMembers, classWithMembers: classRecord),
+      members: @[]
+    ))
+    # For ClassWithMembers, we don't have type info, so we must infer from context
+    # or read full records for each member
+    for i in 0..<classRecord.classInfo.memberCount:
+      result.classVal.members.add(readRemotingValue(inp))
   of rtArraySinglePrimitive:
     # Read ArraySinglePrimitive record (Section 2.4.3.3)
     let arrayRecord = readArraySinglePrimitive(inp)
