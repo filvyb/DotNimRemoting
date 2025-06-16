@@ -274,6 +274,84 @@ proc classWithMembersAndTypes*(ctx: SerializationContext, className: string,
   ctx.nextId += 1
 
 
+proc systemClassWithMembersAndTypes*(ctx: SerializationContext, className: string,
+                                           members: seq[(string, BinaryType, AdditionalTypeInfo)]): SystemClassWithMembersAndTypes =
+  ## Create a SystemClassWithMembersAndTypes record using context for ID assignment
+  ## For system library classes, so no library ID needed
+  
+  # Create member names list and type info
+  var memberNames: seq[string]
+  var binaryTypes: seq[BinaryType]
+  var additionalInfos: seq[AdditionalTypeInfo]
+  
+  for (name, btype, addInfo) in members:
+    memberNames.add(name)
+    binaryTypes.add(btype)
+    additionalInfos.add(addInfo)
+  
+  result = SystemClassWithMembersAndTypes(
+    recordType: rtSystemClassWithMembersAndTypes,
+    classInfo: classInfo(name = className, memberNames = memberNames),
+    memberTypeInfo: MemberTypeInfo(
+      binaryTypes: binaryTypes,
+      additionalInfos: additionalInfos
+    )
+  )
+  
+  # Assign ID directly to the class record
+  result.classInfo.objectId = ctx.nextId
+  ctx.nextId += 1
+
+
+proc classWithMembersAndTypesToSystemClass*(value: RemotingValue, newClassName: string = ""): RemotingValue =
+  ## Converts a RemotingValue containing rtClassWithMembersAndTypes to rtSystemClassWithMembersAndTypes
+  ## This removes the library reference, making it a system class
+  ## If newClassName is provided, the class name will be changed to the new value
+  
+  # Validate input
+  if value.kind != rvClass:
+    raise newException(ValueError, "Input must be a class RemotingValue")
+    
+  if value.classVal.record.kind != rtClassWithMembersAndTypes:
+    raise newException(ValueError, "Input must contain rtClassWithMembersAndTypes record")
+  
+  let sourceRecord = value.classVal.record.classWithMembersAndTypes
+  
+  # Determine the class name to use
+  var classInfoToUse = sourceRecord.classInfo
+  if newClassName.len > 0:
+    classInfoToUse = ClassInfo(
+      objectId: sourceRecord.classInfo.objectId,
+      name: LengthPrefixedString(value: newClassName),
+      memberCount: sourceRecord.classInfo.memberCount,
+      memberNames: sourceRecord.classInfo.memberNames
+    )
+  
+  # Create SystemClassWithMembersAndTypes from the source
+  let systemClassRecord = SystemClassWithMembersAndTypes(
+    recordType: rtSystemClassWithMembersAndTypes,
+    classInfo: classInfoToUse,  # Use potentially modified class info
+    memberTypeInfo: sourceRecord.memberTypeInfo  # Copy member type info as-is
+  )
+  
+  # Create new ClassRecord wrapper
+  let classRecordWrapper = ClassRecord(
+    kind: rtSystemClassWithMembersAndTypes,
+    systemClassWithMembersAndTypes: systemClassRecord
+  )
+  
+  # Create new ClassValue with same members
+  let classValue = ClassValue(
+    record: classRecordWrapper,
+    members: value.classVal.members  # Copy members as-is
+  )
+  
+  # Return new RemotingValue
+  result = RemotingValue(
+    kind: rvClass,
+    classVal: classValue
+  )
+
 #
 # Array construction helpers
 #
