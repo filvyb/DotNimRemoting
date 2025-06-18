@@ -89,13 +89,19 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     # Read the array object
     let arrayObj = readArraySingleObject(inp)
     # Read array values as RemotingValue objects
-    for i in 0..<arrayObj.arrayInfo.length:
-      result.array.add(readRemotingValue(inp))
-    # The array contains additional information based on the flags:
-    # - If MethodSignatureInArray is set, the array includes the method signature
-    # - If GenericMethod is set, the array includes the generic type arguments
-    # - If ArgsInArray is set, the array contains the arguments
-    # - If ContextInArray is set, the array contains the call context
+    # Kinda crude, but works for now
+    var count = 0
+    while count < arrayObj.arrayInfo.length:
+      let nextType = peekRecord(inp)
+      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+        let nullsToRead = readOptimizedNulls(inp, nextType)
+        let nullsToAdd = min(nullsToRead, arrayObj.arrayInfo.length - count)
+        for i in 0..<nullsToAdd:
+          result.array.add(RemotingValue(kind: rvNull))
+        count += nullsToAdd
+      else:
+        result.array.add(readRemotingValue(inp))
+        count += 1
 
 proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[RemotingValue]] =
   ## Reads a method return + optional array
@@ -134,8 +140,19 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
     # Read the array object
     let arrayObj = readArraySingleObject(inp)
     # Read array values as RemotingValue objects
-    for i in 0..<arrayObj.arrayInfo.length:
-      result.array.add(readRemotingValue(inp))
+    # Kinda crude, but works for now
+    var count = 0
+    while count < arrayObj.arrayInfo.length:
+      let nextType = peekRecord(inp)
+      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+        let nullsToRead = readOptimizedNulls(inp, nextType)
+        let nullsToAdd = min(nullsToRead, arrayObj.arrayInfo.length - count)
+        for i in 0..<nullsToAdd:
+          result.array.add(RemotingValue(kind: rvNull))
+        count += nullsToAdd
+      else:
+        result.array.add(readRemotingValue(inp))
+        count += 1
 
 proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   ## Reads a complete remoting message following MS-NRBF grammar
