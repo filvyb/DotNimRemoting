@@ -120,6 +120,7 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
   # Handle optional return array based on flags  
   if MessageFlag.ReturnValueInArray in result.ret.messageEnum or
      MessageFlag.ArgsInArray in result.ret.messageEnum or
+     MessageFlag.ArgsIsArray in result.ret.messageEnum or
      MessageFlag.ContextInArray in result.ret.messageEnum or
      MessageFlag.ExceptionInArray in result.ret.messageEnum:
      
@@ -253,6 +254,7 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
   # Write return array if specified in flags
   if MessageFlag.ReturnValueInArray in ret.messageEnum or 
      MessageFlag.ArgsInArray in ret.messageEnum or 
+     MessageFlag.ArgsIsArray in ret.messageEnum or
      MessageFlag.ContextInArray in ret.messageEnum or 
      MessageFlag.ExceptionInArray in ret.messageEnum:
     # Validate that array elements are provided
