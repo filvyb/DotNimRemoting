@@ -97,6 +97,9 @@ For testing .NET interop, check the examples in the `tests/` directory.
 # Build the library
 nimble build
 
+# Build the library with debugging messages
+nimble build -d:dbgEcho
+
 # Install the library
 nimble install
 

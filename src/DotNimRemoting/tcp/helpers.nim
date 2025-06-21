@@ -2,7 +2,7 @@ import types
 
 # Define debug template for logging
 template debugLog*(msg: varargs[string, `$`]) =
-  when not defined(release) or not defined(danger):
+  when defined(dbgEcho):
     echo msg
 
 proc newCountedString*(encoding: StringEncoding, value: string): CountedString =
