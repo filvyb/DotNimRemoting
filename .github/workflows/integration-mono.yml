@@ -1,0 +1,37 @@
+name: Integration Tests (Linux/Mono)
+
+on: [push, pull_request]
+
+jobs:
+  integration-mono:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Nim
+      uses: jiro4989/setup-nim-action@v2.3.0
+      with:
+        nim-version: '2.2.0'
+
+    - name: Install Mono
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mono-complete
+
+    - name: Install Nim dependencies
+      run: |
+        nimble refresh
+        nimble install -dy
+
+    - name: Run Mono integration tests
+      run: bash tests/run_integration_mono.sh
+
+    - name: Cache nimble packages
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.nimble
+          ${{ github.workspace }}/nimcache
+        key: ${{ runner.os }}-mono-nim-2.2.0-v1
+        restore-keys: |
+          ${{ runner.os }}-mono-nim-

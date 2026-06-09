@@ -6,3 +6,7 @@ nimble.paths
 util.sh
 bin/
 nimbledeps
+
+tests/dotnet/out/
+tests/nim/client
+tests/nim/server

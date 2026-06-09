@@ -320,8 +320,6 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
         let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
         result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
       of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        # These types are referenceable records (e.g. BinaryObjectString,
-        # MemberReference, ObjectNull), so read a full record
         result.classVal.members.add(readRemotingValue(inp))
   of rtClassWithId:
     let classRecord = readClassWithId(inp)
@@ -346,8 +344,6 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
         let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
         result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
       of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        # These types are referenceable records (e.g. BinaryObjectString,
-        # MemberReference, ObjectNull), so read a full record
         result.classVal.members.add(readRemotingValue(inp))
   of rtSystemClassWithMembers:
     let classRecord = readSystemClassWithMembers(inp)
