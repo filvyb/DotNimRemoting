@@ -99,9 +99,7 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
         
         var output = memoryOutput()
         writeMessageFrame(output, responseFrame)
-        for b in responseData:
-          output.write(b)
-        
+
         let responseBytes = output.getOutput(seq[byte])
         debugLog "[SERVER] Total response size: ", responseBytes.len, " bytes"
         await client.send(cast[string](responseBytes))

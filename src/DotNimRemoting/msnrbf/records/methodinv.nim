@@ -314,16 +314,14 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     for i in 0..<classRecord.classInfo.memberCount:
       let binaryType = classRecord.memberTypeInfo.binaryTypes[i]
       let additionalInfo = classRecord.memberTypeInfo.additionalInfos[i]
-      
+
       case binaryType
       of btPrimitive:
         let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
         result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
-      of btString:
-        let strValue = readLengthPrefixedString(inp)
-        result.classVal.members.add(RemotingValue(kind: rvString, stringVal: strValue))
-      of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        # These types require reading full records
+      of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+        # These types are referenceable records (e.g. BinaryObjectString,
+        # MemberReference, ObjectNull), so read a full record
         result.classVal.members.add(readRemotingValue(inp))
   of rtClassWithId:
     let classRecord = readClassWithId(inp)
@@ -347,11 +345,9 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
       of btPrimitive:
         let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
         result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
-      of btString:
-        let strValue = readLengthPrefixedString(inp)
-        result.classVal.members.add(RemotingValue(kind: rvString, stringVal: strValue))
-      of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        # These types require reading full records
+      of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+        # These types are referenceable records (e.g. BinaryObjectString,
+        # MemberReference, ObjectNull), so read a full record
         result.classVal.members.add(readRemotingValue(inp))
   of rtSystemClassWithMembers:
     let classRecord = readSystemClassWithMembers(inp)
@@ -648,12 +644,9 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
             if member.kind != rvPrimitive:
               raise newException(ValueError, "Expected primitive member for btPrimitive type")
             writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
-          of btString:
-            if member.kind != rvString:
-              raise newException(ValueError, "Expected string member for btString type")
-            writeLengthPrefixedString(outp, member.stringVal.value)
-          of btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-            # These types require writing full records
+          of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
+            # These types are referenceable records (e.g. BinaryObjectString,
+            # MemberReference, ObjectNull), so write a full record
             writeRemotingValue(outp, member, ctx)
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)

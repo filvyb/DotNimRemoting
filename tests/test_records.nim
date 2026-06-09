@@ -233,10 +233,80 @@ suite "Class Records Tests":
     var outStream = memoryOutput()
     outStream.write([1'u8, 0, 0])  # Not enough bytes for objectId
     let serialized = outStream.getOutput(seq[byte])
-    
+
     let inStream = memoryInput(serialized)
     expect IOError:
       discard readClassInfo(inStream)
+
+  test "String class members are serialized as BinaryObjectString records":
+    # Per MS-NRBF section 2.3, btString members are referenceable records
+    # (BinaryObjectString/MemberReference/ObjectNull), never raw inline strings.
+    let cls = systemClassWithMembersAndTypes("System.Exception",
+      @[("Message", btString, AdditionalTypeInfo(kind: btString))])
+    let value = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtSystemClassWithMembersAndTypes,
+                          systemClassWithMembersAndTypes: cls),
+      members: @[RemotingValue(kind: rvString,
+                 stringVal: LengthPrefixedString(value: "hello"))]
+    ))
+
+    let ctx = newSerializationContext()
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, value, ctx)
+    let serialized = outStream.getOutput(seq[byte])
+
+    # Reference wire format as produced by .NET BinaryFormatter
+    let expected = @[
+      0x04'u8,                       # RecordType: SystemClassWithMembersAndTypes
+      0x01, 0x00, 0x00, 0x00,        # objectId = 1
+      0x10,                          # class name length = 16
+      0x53, 0x79, 0x73, 0x74, 0x65, 0x6D, 0x2E,              # "System."
+      0x45, 0x78, 0x63, 0x65, 0x70, 0x74, 0x69, 0x6F, 0x6E,  # "Exception"
+      0x01, 0x00, 0x00, 0x00,        # memberCount = 1
+      0x07,                          # member name length = 7
+      0x4D, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65,              # "Message"
+      0x01,                          # BinaryType: btString
+      0x06,                          # RecordType: BinaryObjectString
+      0x02, 0x00, 0x00, 0x00,        # objectId = 2
+      0x05,                          # string length = 5
+      0x68, 0x65, 0x6C, 0x6C, 0x6F   # "hello"
+    ]
+    check serialized == expected
+
+    # And it must round-trip
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+    check decoded.kind == rvClass
+    check decoded.classVal.members.len == 1
+    check decoded.classVal.members[0].kind == rvString
+    check decoded.classVal.members[0].stringVal.value == "hello"
+
+  test "String members round-trip in ClassWithMembersAndTypes":
+    let cls = classWithMembersAndTypes("MyLib.Person", 3,
+      @[("name", btString, AdditionalTypeInfo(kind: btString)),
+        ("age", btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32))])
+    let value = RemotingValue(kind: rvClass, classVal: ClassValue(
+      record: ClassRecord(kind: rtClassWithMembersAndTypes,
+                          classWithMembersAndTypes: cls),
+      members: @[
+        RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "John")),
+        RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(30))
+      ]
+    ))
+
+    let ctx = newSerializationContext()
+    var outStream = memoryOutput()
+    writeRemotingValue(outStream, value, ctx)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream)
+    check decoded.kind == rvClass
+    check decoded.classVal.members.len == 2
+    check decoded.classVal.members[0].kind == rvString
+    check decoded.classVal.members[0].stringVal.value == "John"
+    check decoded.classVal.members[1].kind == rvPrimitive
+    check decoded.classVal.members[1].primitiveVal.int32Val == 30
 
 suite "Other Records Tests":
   test "Basic header serialization/deserialization":

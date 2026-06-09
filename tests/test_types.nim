@@ -220,6 +220,23 @@ suite "Common Data Types Tests":
       var outStream = memoryOutput()
       writeDateTime(outStream, dt)
 
+  test "DateTime matches .NET wire format":
+    # .NET BinaryFormatter encodes DateTime as dateData = ticks | (kind << 62),
+    # i.e. kind in the most significant 2 bits, little-endian on the wire.
+    # Reference: Unix epoch (621355968000000000 ticks), DateTimeKind.Utc (1)
+    let dotnetBytes = @[
+      0x00'u8, 0x80'u8, 0xB5'u8, 0xF7'u8, 0xF5'u8, 0x7F'u8, 0x9F'u8, 0x48'u8
+    ]
+
+    let inStream = memoryInput(dotnetBytes)
+    let decoded = readDateTime(inStream)
+    check decoded.ticks == 621355968000000000'i64
+    check decoded.kind == 1
+
+    var outStream = memoryOutput()
+    writeDateTime(outStream, DateTime(ticks: 621355968000000000'i64, kind: 1))
+    check outStream.getOutput(seq[byte]) == dotnetBytes
+
   test "Decimal positive number serialization":
     let original = "123.456"
     var outStream = memoryOutput()

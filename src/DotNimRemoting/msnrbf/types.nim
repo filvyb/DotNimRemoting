@@ -109,19 +109,20 @@ proc readTimeSpan*(inp: InputStream): TimeSpan =
 
 proc readDateTime*(inp: InputStream): DateTime =
   ## Reads DateTime value - 64 bits total
-  ## - 62 bits for ticks
-  ## - 2 bits for kind
+  ## - lower 62 bits for ticks
+  ## - upper 2 bits for kind
+  ## .NET encodes this as dateData = ticks | (kind << 62)
   if not inp.readable(8):
     raise newException(IOError, "Not enough bytes for datetime")
-    
+
   var bytes: array[8, byte]
   discard inp.readInto(bytes)
   let raw = cast[int64](bytes)
-  
-  # Extract kind from last 2 bits
-  result.kind = uint8(raw and 0b11)
-  # Extract ticks from first 62 bits
-  result.ticks = raw shr 2
+
+  # Extract kind from the most significant 2 bits
+  result.kind = uint8((raw shr 62) and 0b11)
+  # Extract ticks from the lower 62 bits
+  result.ticks = raw and 0x3FFF_FFFF_FFFF_FFFF'i64
 
 proc readLengthPrefixedString*(inp: InputStream): LengthPrefixedString =
   ## Reads a length-prefixed string from stream using variable length encoding
@@ -231,13 +232,13 @@ proc writeTimeSpan*(outp: OutputStream, ts: TimeSpan) =
 
 proc writeDateTime*(outp: OutputStream, dt: DateTime) =
   ## Writes DateTime value as 64 bits
-  ## Combines 62-bit ticks with 2-bit kind
+  ## Combines 62-bit ticks with 2-bit kind in the upper bits,
+  ## matching .NET's encoding: dateData = ticks | (kind << 62)
   if dt.kind > 2:
     raise newException(ValueError, "Invalid DateTime kind")
-    
-  # Combine ticks and kind into 64 bits
-  let combined = (dt.ticks shl 2) or int64(dt.kind)
-  let bytes = cast[array[8, byte]](combined) 
+
+  let combined = (dt.ticks and 0x3FFF_FFFF_FFFF_FFFF'i64) or (int64(dt.kind) shl 62)
+  let bytes = cast[array[8, byte]](combined)
   outp.write(bytes)
 
 proc writeLengthPrefixedString*(outp: OutputStream, s: string) =
