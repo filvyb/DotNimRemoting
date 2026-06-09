@@ -15,39 +15,20 @@ jobs:
             arch: arm64
       fail-fast: false
     
-    runs-on: ${{ matrix.arch == 'arm64' && matrix.os == 'macos-latest' && 'macos-14' || matrix.os }}
-    
+    runs-on: >-
+      ${{ (matrix.os == 'macos-latest' && matrix.arch == 'arm64') && 'macos-14'
+       || (matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64') && 'ubuntu-24.04-arm'
+       || matrix.os }}
+
     steps:
     - uses: actions/checkout@v6
 
-    # Install Nim on ARM platforms that need manual installation
-    - name: Install Nim (Ubuntu ARM64)
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc git
-        git clone https://github.com/nim-lang/nim.git
-        cd nim
-        git checkout v${{ matrix.nim-version }}
-        sh build_all.sh
-        bin/nim c koch
-        ./koch boot -d:release
-        ./koch tools
-        echo "$PWD/bin" >> $GITHUB_PATH
-
-    - name: Install Nim (macOS ARM64)
-      if: matrix.os == 'macos-latest' && matrix.arch == 'arm64'
+    # setup-nim-action supports x64 and arm64 on all platforms
+    - name: Install Nim
       uses: jiro4989/setup-nim-action@v2.3.0
       with:
         nim-version: ${{ matrix.nim-version }}
 
-    # Default x64 installation
-    - name: Install Nim (x64)
-      if: matrix.arch == 'x64'
-      uses: jiro4989/setup-nim-action@v2.3.0
-      with:
-        nim-version: ${{ matrix.nim-version }}
-        
     - name: Install dependencies
       run: |
         nimble install -y
