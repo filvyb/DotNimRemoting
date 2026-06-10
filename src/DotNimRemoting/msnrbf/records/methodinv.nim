@@ -275,8 +275,22 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
   if MessageFlag.ArgsInline in result.messageEnum:
     result.args = readArrayOfValueWithCode(inp)
 
-proc readRemotingValue*(inp: InputStream): RemotingValue =
-  ## Reads any member reference and referenceables from the input stream into a RemotingValue
+proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue =
+  ## Reads any member reference and referenceables from the input stream into a RemotingValue.
+  ## The ReferenceContext tracks class metadata across records so ClassWithId
+  ## records can resolve their MetadataId.
+  proc readClassMembers(inp: InputStream, ctx: ReferenceContext, info: ClassMetadataInfo): seq[RemotingValue] =
+    ## Reads class member values following a class record, according to the
+    ## class metadata (Section 2.7: Classes = ... *(memberReference)).
+    ## Members declared btPrimitive are read as MemberPrimitiveUnTyped (Section 2.3.2);
+    ## all other members are full records.
+    for i in 0..<info.memberCount:
+      if info.hasTypeInfo and info.memberTypeInfo.binaryTypes[i] == btPrimitive:
+        let primValue = readMemberPrimitiveUnTyped(inp, info.memberTypeInfo.additionalInfos[i].primitiveType)
+        result.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
+      else:
+        result.add(readRemotingValue(inp, ctx))
+
   let recordType = peekRecord(inp)
   case recordType
   of rtMemberPrimitiveTyped:
@@ -305,66 +319,63 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
     result = RemotingValue(kind: rvReference, idRef: refRecord.idRef)
   of rtClassWithMembersAndTypes:
     let classRecord = readClassWithMembersAndTypes(inp)
+    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
+    let info = ClassMetadataInfo(
+      memberCount: classRecord.classInfo.memberCount,
+      hasTypeInfo: true,
+      memberTypeInfo: classRecord.memberTypeInfo
+    )
+    ctx.addClassMetadata(classRecord.classInfo.objectId, info)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
       record: ClassRecord(kind: rtClassWithMembersAndTypes, classWithMembersAndTypes: classRecord),
-      members: @[]
+      members: readClassMembers(inp, ctx, info)
     ))
-    # Read members according to their declared types in MemberTypeInfo
-    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
-    for i in 0..<classRecord.classInfo.memberCount:
-      let binaryType = classRecord.memberTypeInfo.binaryTypes[i]
-      let additionalInfo = classRecord.memberTypeInfo.additionalInfos[i]
-
-      case binaryType
-      of btPrimitive:
-        let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
-        result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
-      of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        result.classVal.members.add(readRemotingValue(inp))
   of rtClassWithId:
     let classRecord = readClassWithId(inp)
+    # Member values follow, laid out according to the metadata record referenced
+    # by MetadataId, which must appear earlier in the stream (Section 2.3.2.5)
+    let info = ctx.getClassMetadata(classRecord.metadataId)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
       record: ClassRecord(kind: rtClassWithId, classWithId: classRecord),
-      members: @[]
+      members: readClassMembers(inp, ctx, info)
     ))
   of rtSystemClassWithMembersAndTypes:
     let classRecord = readSystemClassWithMembersAndTypes(inp)
+    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
+    let info = ClassMetadataInfo(
+      memberCount: classRecord.classInfo.memberCount,
+      hasTypeInfo: true,
+      memberTypeInfo: classRecord.memberTypeInfo
+    )
+    ctx.addClassMetadata(classRecord.classInfo.objectId, info)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
       record: ClassRecord(kind: rtSystemClassWithMembersAndTypes, systemClassWithMembersAndTypes: classRecord),
-      members: @[]
+      members: readClassMembers(inp, ctx, info)
     ))
-    # Read members according to their declared types in MemberTypeInfo
-    # Section 2.3.2: Member values follow the class header and are read according to BinaryType
-    for i in 0..<classRecord.classInfo.memberCount:
-      let binaryType = classRecord.memberTypeInfo.binaryTypes[i]
-      let additionalInfo = classRecord.memberTypeInfo.additionalInfos[i]
-      
-      case binaryType
-      of btPrimitive:
-        let primValue = readMemberPrimitiveUnTyped(inp, additionalInfo.primitiveType)
-        result.classVal.members.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
-      of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-        result.classVal.members.add(readRemotingValue(inp))
   of rtSystemClassWithMembers:
     let classRecord = readSystemClassWithMembers(inp)
+    # No member type info, so each member is read as a full record
+    let info = ClassMetadataInfo(
+      memberCount: classRecord.classInfo.memberCount,
+      hasTypeInfo: false
+    )
+    ctx.addClassMetadata(classRecord.classInfo.objectId, info)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
       record: ClassRecord(kind: rtSystemClassWithMembers, systemClassWithMembers: classRecord),
-      members: @[]
+      members: readClassMembers(inp, ctx, info)
     ))
-    # For SystemClassWithMembers, we don't have type info, so we must infer from context
-    # or read full records for each member
-    for i in 0..<classRecord.classInfo.memberCount:
-      result.classVal.members.add(readRemotingValue(inp))
   of rtClassWithMembers:
     let classRecord = readClassWithMembers(inp)
+    # No member type info, so each member is read as a full record
+    let info = ClassMetadataInfo(
+      memberCount: classRecord.classInfo.memberCount,
+      hasTypeInfo: false
+    )
+    ctx.addClassMetadata(classRecord.classInfo.objectId, info)
     result = RemotingValue(kind: rvClass, classVal: ClassValue(
       record: ClassRecord(kind: rtClassWithMembers, classWithMembers: classRecord),
-      members: @[]
+      members: readClassMembers(inp, ctx, info)
     ))
-    # For ClassWithMembers, we don't have type info, so we must infer from context
-    # or read full records for each member
-    for i in 0..<classRecord.classInfo.memberCount:
-      result.classVal.members.add(readRemotingValue(inp))
   of rtArraySinglePrimitive:
     # Read ArraySinglePrimitive record (Section 2.4.3.3)
     let arrayRecord = readArraySinglePrimitive(inp)
@@ -395,7 +406,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
         count += nullsToAdd
       else:
         # Read the element as a full record (BinaryObjectString, MemberReference, or ObjectNull)
-        elements.add(readRemotingValue(inp))
+        elements.add(readRemotingValue(inp, ctx))
         count += 1
 
     # Construct array result
@@ -420,7 +431,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
           result.arrayVal.elements.add(RemotingValue(kind: rvNull))
         count += nullsToAdd
       else:
-        result.arrayVal.elements.add(readRemotingValue(inp))
+        result.arrayVal.elements.add(readRemotingValue(inp, ctx))
         count += 1
   of rtBinaryArray:
     # Read the BinaryArray record metadata
@@ -451,7 +462,7 @@ proc readRemotingValue*(inp: InputStream): RemotingValue =
             elements.add(RemotingValue(kind: rvNull))
           count += nullsToAdd
         else:
-          elements.add(readRemotingValue(inp))
+          elements.add(readRemotingValue(inp, ctx))
           count += 1
     
     # Construct the result
@@ -531,6 +542,22 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
   ## MemberReference records instead of full records for objects that have been 
   ## serialized before, improving space efficiency.
   ## Writes both member reference and referenceables
+  proc writeClassMembers(outp: OutputStream, members: seq[RemotingValue], info: ClassMetadataInfo, ctx: SerializationContext) =
+    ## Writes class member values following a class record, according to the
+    ## class metadata (Section 2.7: Classes = ... *(memberReference)).
+    ## Members declared btPrimitive are written as MemberPrimitiveUnTyped (Section 2.3.2);
+    ## all other members are full records.
+    if members.len.int32 != info.memberCount:
+      raise newException(ValueError, "Class member count mismatch: metadata declares " &
+                         $info.memberCount & " members, got " & $members.len)
+    for i, member in members:
+      if info.hasTypeInfo and info.memberTypeInfo.binaryTypes[i] == btPrimitive:
+        if member.kind != rvPrimitive:
+          raise newException(ValueError, "Expected primitive member for btPrimitive type, got " & $member.kind)
+        writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
+      else:
+        writeRemotingValue(outp, member, ctx)
+
   let valuePtr = cast[pointer](value)
   
   case value.kind
@@ -574,76 +601,85 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
     else:
       let id = assignIdForPointer(ctx, valuePtr)
 
-      var memberTypeInfo: MemberTypeInfo
-      let needsTypeInfo = value.classVal.record.kind in {rtClassWithMembersAndTypes, rtSystemClassWithMembersAndTypes}
-
-
       # Write the correct class record header using the new ID and derived MemberTypeInfo
       case value.classVal.record.kind
       of rtClassWithId:
         var recordToWrite = value.classVal.record.classWithId
         recordToWrite.objectId = id # Assign the new ID
+        # The referenced metadata record must appear earlier in the stream
+        # (Section 2.3.2.5); remap MetadataId to its newly assigned ID
+        if not ctx.hasWrittenClassMetadata(recordToWrite.metadataId):
+          raise newException(ValueError, "ClassWithId references class metadata " &
+                             $recordToWrite.metadataId & " that has not been written to the stream")
+        let (metadataId, info) = ctx.getWrittenClassMetadata(recordToWrite.metadataId)
+        recordToWrite.metadataId = metadataId
         writeClassWithId(outp, recordToWrite)
-        echo "Warning: Writing ClassWithId for first encounter of object ID ", id, ". Members might be lost."
-        # No members follow ClassWithId per spec/grammar
+        # Member values follow, laid out per the referenced metadata
+        writeClassMembers(outp, value.classVal.members, info, ctx)
 
       of rtSystemClassWithMembers:
         var recordToWrite = value.classVal.record.systemClassWithMembers
+        let originalId = recordToWrite.classInfo.objectId
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
         writeSystemClassWithMembers(outp, recordToWrite)
+        let info = ClassMetadataInfo(
+          memberCount: recordToWrite.classInfo.memberCount,
+          hasTypeInfo: false
+        )
+        ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members following the header
-        for member in value.classVal.members:
-          writeRemotingValue(outp, member, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx)
 
       of rtClassWithMembers:
         var recordToWrite = value.classVal.record.classWithMembers
+        let originalId = recordToWrite.classInfo.objectId
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
         writeClassWithMembers(outp, recordToWrite)
+        let info = ClassMetadataInfo(
+          memberCount: recordToWrite.classInfo.memberCount,
+          hasTypeInfo: false
+        )
+        ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members following the header
-        for member in value.classVal.members:
-          writeRemotingValue(outp, member, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx)
 
       of rtSystemClassWithMembersAndTypes:
         var recordToWrite = value.classVal.record.systemClassWithMembersAndTypes
+        let originalId = recordToWrite.classInfo.objectId
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
         if recordToWrite.memberTypeInfo.binaryTypes.len == 0 and recordToWrite.classInfo.memberCount != 0: # Check if populated
           recordToWrite.memberTypeInfo = determineMemberTypeInfo(value.classVal.members) # Fallback
 
         writeSystemClassWithMembersAndTypes(outp, recordToWrite)
-        # Write members following the header
-        for member in value.classVal.members:
-          if member.kind == rvPrimitive and canWriteUntyped(member.primitiveVal):
-            # Write as MemberPrimitiveUnTyped
-            writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
-          else:
-            # Write the full member value
-            writeRemotingValue(outp, member, ctx)
+        let info = ClassMetadataInfo(
+          memberCount: recordToWrite.classInfo.memberCount,
+          hasTypeInfo: true,
+          memberTypeInfo: recordToWrite.memberTypeInfo
+        )
+        ctx.registerWrittenClassMetadata(originalId, id, info)
+        # Write members according to their declared types in MemberTypeInfo
+        writeClassMembers(outp, value.classVal.members, info, ctx)
 
       of rtClassWithMembersAndTypes:
         var recordToWrite = value.classVal.record.classWithMembersAndTypes
+        let originalId = recordToWrite.classInfo.objectId
         recordToWrite.classInfo.objectId = id # Assign the new ID
         recordToWrite.classInfo.memberCount = value.classVal.members.len.int32 # Use actual count
         if recordToWrite.memberTypeInfo.binaryTypes.len == 0 and recordToWrite.classInfo.memberCount != 0: # Check if populated
           recordToWrite.memberTypeInfo = determineMemberTypeInfo(value.classVal.members) # Fallback
         writeClassWithMembersAndTypes(outp, recordToWrite)
+        let info = ClassMetadataInfo(
+          memberCount: recordToWrite.classInfo.memberCount,
+          hasTypeInfo: true,
+          memberTypeInfo: recordToWrite.memberTypeInfo
+        )
+        ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members according to their declared types in MemberTypeInfo
         # Section 2.3.2: Member values follow the class header and are written according to BinaryType
-        for i, member in value.classVal.members:
-          let binaryType = recordToWrite.memberTypeInfo.binaryTypes[i]
-          let additionalInfo = recordToWrite.memberTypeInfo.additionalInfos[i]
-          
-          case binaryType
-          of btPrimitive:
-            if member.kind != rvPrimitive:
-              raise newException(ValueError, "Expected primitive member for btPrimitive type")
-            writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
-          of btString, btObject, btSystemClass, btClass, btObjectArray, btStringArray, btPrimitiveArray:
-            # These types are referenceable records (e.g. BinaryObjectString,
-            # MemberReference, ObjectNull), so write a full record
-            writeRemotingValue(outp, member, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx)
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
   of rvArray:

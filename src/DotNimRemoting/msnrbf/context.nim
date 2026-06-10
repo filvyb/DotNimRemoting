@@ -36,9 +36,19 @@ type
     else:
       discard
 
+  ClassMetadataInfo* = object
+    ## Member layout of a metadata-bearing class record (SystemClassWithMembers,
+    ## SystemClassWithMembersAndTypes, ClassWithMembers, ClassWithMembersAndTypes).
+    ## Needed to read/write the member values of ClassWithId records, which carry
+    ## no metadata of their own (Section 2.3.2.5)
+    memberCount*: int32
+    hasTypeInfo*: bool             # True for the ...AndTypes record variants
+    memberTypeInfo*: MemberTypeInfo
+
   ReferenceContext* = ref object
     ## Tracks object references during deserialization
     libraries*: Table[int32, BinaryLibrary]     # Maps library IDs to libraries
+    classMetadata*: Table[int32, ClassMetadataInfo] # Maps class record object IDs to their metadata
 
 
 proc addLibrary*(ctx: ReferenceContext, lib: BinaryLibrary) =
@@ -54,9 +64,22 @@ proc getLibrary*(ctx: ReferenceContext, id: int32): BinaryLibrary =
     raise newException(IOError, "Missing library reference: " & $id)
   result = ctx.libraries[id]
 
+proc addClassMetadata*(ctx: ReferenceContext, objectId: int32, info: ClassMetadataInfo) =
+  ## Track the metadata of a class record so later ClassWithId records can
+  ## reference it by object ID
+  ctx.classMetadata[objectId] = info
+
+proc getClassMetadata*(ctx: ReferenceContext, id: int32): ClassMetadataInfo =
+  ## Look up class metadata referenced by a ClassWithId record's MetadataId.
+  ## The referenced record must appear earlier in the stream (Section 2.3.2.5)
+  if id notin ctx.classMetadata:
+    raise newException(IOError, "Missing class metadata reference: " & $id)
+  result = ctx.classMetadata[id]
+
 proc newReferenceContext*(): ReferenceContext =
   ReferenceContext(
-    libraries: initTable[int32, BinaryLibrary]()
+    libraries: initTable[int32, BinaryLibrary](),
+    classMetadata: initTable[int32, ClassMetadataInfo]()
   )
 
 
@@ -66,13 +89,17 @@ type
     nextId*: int32                               # Counter for generating new IDs, starts at 1
     assignedIds*: Table[int, int32]             # Maps object memory addresses to their assigned IDs
     writtenObjects*: Table[int, int32]          # Maps object memory addresses to their assigned IDs for objects that have been written
+    writtenClassMetadata*: Table[int32, tuple[newId: int32, info: ClassMetadataInfo]]
+      # Maps the original object ID of written class records to their newly
+      # assigned ID and metadata, so ClassWithId records can be remapped
 
 proc newSerializationContext*(): SerializationContext =
   ## Creates a new SerializationContext with an initial ID of 1
   SerializationContext(
     nextId: 1,
     assignedIds: initTable[int, int32](),
-    writtenObjects: initTable[int, int32]()
+    writtenObjects: initTable[int, int32](),
+    writtenClassMetadata: initTable[int32, tuple[newId: int32, info: ClassMetadataInfo]]()
   )
 
 proc `$`*(ctx: ReferenceContext): string =
@@ -125,6 +152,22 @@ proc setWrittenObjectId*(ctx: SerializationContext, obj: pointer, id: int32) =
   let key = cast[int](obj)
   ctx.writtenObjects[key] = id
 
+
+proc registerWrittenClassMetadata*(ctx: SerializationContext, originalId, newId: int32, info: ClassMetadataInfo) =
+  ## Records the metadata of a class record that was written to the stream,
+  ## keyed by its original object ID, so later ClassWithId records can resolve
+  ## their MetadataId and have it remapped to the newly assigned ID.
+  ## Records without a meaningful original ID (0) are not registered.
+  if originalId != 0:
+    ctx.writtenClassMetadata[originalId] = (newId: newId, info: info)
+
+proc hasWrittenClassMetadata*(ctx: SerializationContext, originalId: int32): bool =
+  ## Check if class metadata with the given original object ID has been written
+  ctx.writtenClassMetadata.hasKey(originalId)
+
+proc getWrittenClassMetadata*(ctx: SerializationContext, originalId: int32): tuple[newId: int32, info: ClassMetadataInfo] =
+  ## Get the newly assigned ID and metadata for a previously written class record
+  ctx.writtenClassMetadata[originalId]
 
 proc assignIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
   ## Assigns the next available ID for a given object pointer if not already assigned.

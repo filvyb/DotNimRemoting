@@ -100,7 +100,7 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
           result.array.add(RemotingValue(kind: rvNull))
         count += nullsToAdd
       else:
-        result.array.add(readRemotingValue(inp))
+        result.array.add(readRemotingValue(inp, ctx))
         count += 1
 
 proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[RemotingValue]] =
@@ -151,7 +151,7 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
           result.array.add(RemotingValue(kind: rvNull))
         count += nullsToAdd
       else:
-        result.array.add(readRemotingValue(inp))
+        result.array.add(readRemotingValue(inp, ctx))
         count += 1
 
 proc readRemotingMessage*(inp: InputStream): RemotingMessage =
@@ -191,7 +191,7 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
       raise newException(IOError, "Unexpected MessageEnd before method")
       
     # Read referenceable record as RemotingValue
-    result.referencedRecords.add(readRemotingValue(inp))
+    result.referencedRecords.add(readRemotingValue(inp, ctx))
 
   # Read required method call or return
   if not inp.readable:
@@ -231,7 +231,7 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
       continue
       
     # Read referenceable record as RemotingValue
-    result.referencedRecords.add(readRemotingValue(inp))
+    result.referencedRecords.add(readRemotingValue(inp, ctx))
 
   raise newException(IOError, "Missing MessageEnd")
 

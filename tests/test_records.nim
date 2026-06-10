@@ -275,7 +275,7 @@ suite "Class Records Tests":
 
     # And it must round-trip
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
     check decoded.kind == rvClass
     check decoded.classVal.members.len == 1
     check decoded.classVal.members[0].kind == rvString
@@ -300,7 +300,7 @@ suite "Class Records Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
     check decoded.kind == rvClass
     check decoded.classVal.members.len == 2
     check decoded.classVal.members[0].kind == rvString
@@ -1145,7 +1145,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvPrimitive
     check decoded.primitiveVal.kind == ptInt32
@@ -1164,7 +1164,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvString
     check decoded.stringVal.value == "Hello, World!"
@@ -1179,7 +1179,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvNull
 
@@ -1196,7 +1196,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvReference
     check decoded.idRef == 123
@@ -1242,7 +1242,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvArray
     # Check the record kind first
@@ -1295,7 +1295,7 @@ suite "SerializationContext Tests":
     let serialized = outStream.getOutput(seq[byte])
 
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvArray
     # Check the record kind first
@@ -1351,7 +1351,7 @@ suite "SerializationContext Tests":
     
     # Now read it as a RemotingValue
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
     
     # Verify the results
     check decoded.kind == rvArray
@@ -1531,7 +1531,7 @@ suite "SerializationContext Tests":
     
     # Deserialize directly
     let inStream = memoryInput(serialized)
-    let decoded = readRemotingValue(inStream)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
     
     # Verify
     check decoded.kind == rvClass
@@ -1546,3 +1546,154 @@ suite "SerializationContext Tests":
     
     check decoded.classVal.members[1].kind == rvString
     check decoded.classVal.members[1].stringVal.value == "Member String Value"
+
+suite "ClassWithId Tests":
+  # Section 2.3.2.5: ClassWithId carries no metadata of its own; MetadataId
+  # references an earlier class record, and member values follow laid out
+  # per that record (Section 2.7: Classes = ... *(memberReference))
+
+  proc makeClassValue(objectId, intVal: int32, strVal: string): RemotingValue =
+    RemotingValue(
+      kind: rvClass,
+      classVal: ClassValue(
+        record: context.ClassRecord(
+          kind: rtClassWithMembersAndTypes,
+          classWithMembersAndTypes: ClassWithMembersAndTypes(
+            recordType: rtClassWithMembersAndTypes,
+            classInfo: ClassInfo(
+              objectId: objectId,
+              name: LengthPrefixedString(value: "TestNamespace.TestClass"),
+              memberCount: 2,
+              memberNames: @[
+                LengthPrefixedString(value: "IntMember"),
+                LengthPrefixedString(value: "StringMember")
+              ]
+            ),
+            memberTypeInfo: MemberTypeInfo(
+              binaryTypes: @[btPrimitive, btString],
+              additionalInfos: @[
+                AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+                AdditionalTypeInfo(kind: btString)
+              ]
+            ),
+            libraryId: 1
+          )
+        ),
+        members: @[
+          RemotingValue(kind: rvPrimitive, primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: intVal)),
+          RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: strVal))
+        ]
+      )
+    )
+
+  test "ClassWithId members are read using referenced metadata":
+    # Stream: ClassWithMembersAndTypes (assigned objectId 1), then a manually
+    # written ClassWithId referencing it, followed by its member values
+    var outStream = memoryOutput()
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, makeClassValue(0, 42, "first"), ctx)
+    writeClassWithId(outStream, ClassWithId(recordType: rtClassWithId, objectId: 50, metadataId: 1))
+    writeMemberPrimitiveUnTyped(outStream, MemberPrimitiveUnTyped(value: PrimitiveValue(kind: ptInt32, int32Val: 99)))
+    writeBinaryObjectString(outStream, BinaryObjectString(recordType: rtBinaryObjectString, objectId: 60, value: LengthPrefixedString(value: "second")))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let refCtx = newReferenceContext()
+    let first = readRemotingValue(inStream, refCtx)
+    let second = readRemotingValue(inStream, refCtx)
+
+    check first.kind == rvClass
+    check second.kind == rvClass
+    check second.classVal.record.kind == rtClassWithId
+    check second.classVal.record.classWithId.metadataId == 1
+    check second.classVal.members.len == 2
+    check second.classVal.members[0].kind == rvPrimitive
+    check second.classVal.members[0].primitiveVal.int32Val == 99
+    check second.classVal.members[1].kind == rvString
+    check second.classVal.members[1].stringVal.value == "second"
+
+  test "ClassWithId inside an object array is read correctly":
+    # Repeated class instances in an array: full metadata record for the first
+    # element, ClassWithId for the second (as .NET emits them)
+    var outStream = memoryOutput()
+    let ctx = newSerializationContext()
+    writeArraySingleObject(outStream, ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(objectId: 10, length: 2)
+    ))
+    writeRemotingValue(outStream, makeClassValue(0, 42, "first"), ctx)
+    writeClassWithId(outStream, ClassWithId(recordType: rtClassWithId, objectId: 50, metadataId: 1))
+    writeMemberPrimitiveUnTyped(outStream, MemberPrimitiveUnTyped(value: PrimitiveValue(kind: ptInt32, int32Val: 7)))
+    writeBinaryObjectString(outStream, BinaryObjectString(recordType: rtBinaryObjectString, objectId: 60, value: LengthPrefixedString(value: "second")))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readRemotingValue(inStream, newReferenceContext())
+
+    check decoded.kind == rvArray
+    check decoded.arrayVal.elements.len == 2
+    check decoded.arrayVal.elements[0].kind == rvClass
+    check decoded.arrayVal.elements[1].kind == rvClass
+    check decoded.arrayVal.elements[1].classVal.record.kind == rtClassWithId
+    check decoded.arrayVal.elements[1].classVal.members.len == 2
+    check decoded.arrayVal.elements[1].classVal.members[0].primitiveVal.int32Val == 7
+    check decoded.arrayVal.elements[1].classVal.members[1].stringVal.value == "second"
+
+  test "ClassWithId round-trips through writeRemotingValue with remapped MetadataId":
+    let metadataValue = makeClassValue(7, 42, "first")
+    let classWithIdValue = RemotingValue(
+      kind: rvClass,
+      classVal: ClassValue(
+        record: context.ClassRecord(
+          kind: rtClassWithId,
+          classWithId: ClassWithId(recordType: rtClassWithId, objectId: 8, metadataId: 7)
+        ),
+        members: @[
+          RemotingValue(kind: rvPrimitive, primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 1337)),
+          RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "second"))
+        ]
+      )
+    )
+
+    var outStream = memoryOutput()
+    let ctx = newSerializationContext()
+    writeRemotingValue(outStream, metadataValue, ctx)
+    writeRemotingValue(outStream, classWithIdValue, ctx)
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let refCtx = newReferenceContext()
+    let first = readRemotingValue(inStream, refCtx)
+    let second = readRemotingValue(inStream, refCtx)
+
+    # MetadataId must point at the metadata record's newly assigned object ID
+    check second.classVal.record.kind == rtClassWithId
+    check second.classVal.record.classWithId.metadataId ==
+      first.classVal.record.classWithMembersAndTypes.classInfo.objectId
+    check second.classVal.members.len == 2
+    check second.classVal.members[0].primitiveVal.int32Val == 1337
+    check second.classVal.members[1].stringVal.value == "second"
+
+  test "ClassWithId referencing unknown metadata fails":
+    # Read side: the referenced record must appear earlier in the stream
+    var outStream = memoryOutput()
+    writeClassWithId(outStream, ClassWithId(recordType: rtClassWithId, objectId: 1, metadataId: 99))
+    let serialized = outStream.getOutput(seq[byte])
+    let inStream = memoryInput(serialized)
+    expect IOError:
+      discard readRemotingValue(inStream, newReferenceContext())
+
+    # Write side: the referenced metadata must already have been written
+    let orphan = RemotingValue(
+      kind: rvClass,
+      classVal: ClassValue(
+        record: context.ClassRecord(
+          kind: rtClassWithId,
+          classWithId: ClassWithId(recordType: rtClassWithId, objectId: 1, metadataId: 99)
+        ),
+        members: @[]
+      )
+    )
+    var outStream2 = memoryOutput()
+    expect ValueError:
+      writeRemotingValue(outStream2, orphan, newSerializationContext())
