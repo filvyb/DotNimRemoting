@@ -169,11 +169,26 @@ proc getWrittenClassMetadata*(ctx: SerializationContext, originalId: int32): tup
   ## Get the newly assigned ID and metadata for a previously written class record
   ctx.writtenClassMetadata[originalId]
 
+proc reserveIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
+  ## Reserves an ID without marking the object written, for records deferred
+  ## from a member position to the top level. The later write reuses the ID.
+  if ctx.hasAssignedId(objPtr):
+    return ctx.getAssignedId(objPtr)
+  let id = ctx.nextId
+  ctx.nextId += 1
+  ctx.setAssignedId(objPtr, id)
+  return id
+
 proc assignIdForPointer*(ctx: SerializationContext, objPtr: pointer): int32 =
   ## Assigns the next available ID for a given object pointer if not already assigned.
-  ## This assigns an ID and marks the object as written in one step.
+  ## Assigns an ID and marks the object written in one step, honoring any ID
+  ## previously reserved with reserveIdForPointer.
   if ctx.hasWrittenObject(objPtr):
     return ctx.getWrittenObjectId(objPtr)
+  elif ctx.hasAssignedId(objPtr):
+    let id = ctx.getAssignedId(objPtr)
+    ctx.setWrittenObjectId(objPtr, id)
+    return id
   else:
     let id = ctx.nextId
     ctx.nextId += 1

@@ -61,11 +61,13 @@ proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue] =
       result.add(arg.value)
   elif MessageFlag.ArgsIsArray in call.messageEnum:
     for elem in msg.methodCallArray:
-      result.add(toPrimitiveValue(elem))
+      result.add(toPrimitiveValue(resolveReference(msg, elem)))
   elif MessageFlag.ArgsInArray in call.messageEnum:
-    if msg.methodCallArray.len > 0 and msg.methodCallArray[0].kind == rvArray:
-      for elem in msg.methodCallArray[0].arrayVal.elements:
-        result.add(toPrimitiveValue(elem))
+    if msg.methodCallArray.len > 0:
+      let argsArray = resolveReference(msg, msg.methodCallArray[0])
+      if argsArray.kind == rvArray:
+        for elem in argsArray.arrayVal.elements:
+          result.add(toPrimitiveValue(resolveReference(msg, elem)))
 
 proc extractMethodCallInfo*(data: seq[byte]): tuple[methodName, typeName: string, isOneWay: bool] =
   ## Extracts method name and type name from serialized message content

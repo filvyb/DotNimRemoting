@@ -51,6 +51,19 @@ proc `$`*(msg: RemotingMessage): string =
   return parts.join("\n")
 
 
+proc resolveReference*(msg: RemotingMessage, value: RemotingValue): RemotingValue =
+  ## Follows a MemberReference to its record, searching referencedRecords and
+  ## the call array. Non-reference values pass through unchanged.
+  if value == nil or value.kind != rvReference:
+    return value
+  for rec in msg.referencedRecords:
+    if objectIdOf(rec) == value.idRef:
+      return rec
+  for rec in msg.methodCallArray:
+    if objectIdOf(rec) == value.idRef:
+      return rec
+  raise newException(ValueError, "Unresolved member reference id " & $value.idRef)
+
 const
   callArrayFlags = {MessageFlag.ArgsIsArray, MessageFlag.ArgsInArray,
                     MessageFlag.ContextInArray, MessageFlag.MethodSignatureInArray,
@@ -319,9 +332,13 @@ proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: Serial
   elif msg.methodReturn.isSome:
     writeMethodReturn(outp, msg.methodReturn.get, msg.methodCallArray, ctx)
   
-  # Write referenced records (e.g., classes, arrays, strings)
+  # Write referenced records (classes, arrays, strings). Skip any already
+  # emitted while writing the call/return (a deferred or shared record):
+  # re-writing would emit a top-level MemberReference, not a valid
+  # referenceable record (Section 2.7).
   for record in msg.referencedRecords:
-    writeRemotingValue(outp, record, ctx)
+    if not ctx.hasWrittenObject(cast[pointer](record)):
+      writeRemotingValue(outp, record, ctx)
 
   # Write the message end
   writeMessageEnd(outp, msg.tail)

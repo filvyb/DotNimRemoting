@@ -121,6 +121,37 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.methodCallArray[0].primitiveVal.int32Val == 10
     check deserialized.tail.recordType == rtMessageEnd
 
+  test "record shared by call array and referencedRecords is written once":
+    # An array in the call array is deferred to a top-level record; listing the
+    # same object in referencedRecords must not re-emit it, since a second write
+    # would produce a top-level MemberReference, not a valid record (Section 2.7)
+    let binaryMethodCall = BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {ArgsIsArray, NoContext},
+      methodName: newStringValueWithCode("Foo"),
+      typeName: newStringValueWithCode("Bar")
+    )
+    let arr = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(kind: rtArraySinglePrimitive,
+                          arraySinglePrimitive: arraySinglePrimitive(2, ptInt32)),
+      elements: @[
+        RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(1)),
+        RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(2))]))
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall),
+                                 callArray = @[arr], refs = @[arr])
+    let serialized = serializeRemotingMessage(msg, ctx)
+    let deserialized = deserializeRemotingMessage(serialized)
+    check deserialized.methodCallArray.len == 1
+    check deserialized.methodCallArray[0].kind == rvReference
+    # Exactly one copy of the array record in the stream
+    check deserialized.referencedRecords.len == 1
+    check deserialized.referencedRecords[0].kind == rvArray
+    let resolved = resolveReference(deserialized, deserialized.methodCallArray[0])
+    check resolved.arrayVal.elements.len == 2
+    check resolved.arrayVal.elements[0].primitiveVal.int32Val == 1
+    check resolved.arrayVal.elements[1].primitiveVal.int32Val == 2
+
   test "method return with inline primitive return value":
     let returnValue = ValueWithCode(primitiveType: ptInt32, value: int32Value(8))
     let binaryMethodReturn = BinaryMethodReturn(

@@ -530,13 +530,41 @@ proc writeBinaryMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn) =
   if MessageFlag.ArgsInline in ret.messageEnum:
     writeArrayOfValueWithCode(outp, ret.args)
 
-proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: SerializationContext) =
-  ## Writes a RemotingValue to the output stream.
-  ## Uses the SerializationContext to track previously serialized objects and write
-  ## MemberReference records instead of full records for objects that have been 
-  ## serialized before, improving space efficiency.
-  ## Writes both member reference and referenceables
-  proc writeClassMembers(outp: OutputStream, members: seq[RemotingValue], info: ClassMetadataInfo, ctx: SerializationContext) =
+proc writeRemotingValue(outp: OutputStream, value: RemotingValue,
+                            ctx: SerializationContext,
+                            deferred: var seq[RemotingValue]) =
+  ## Writes one RemotingValue record in referenceable (top-level) position.
+  ## Already-serialized objects are written as MemberReference records instead
+  ## of full ones. Nested arrays in member positions are appended to `deferred`
+  ## for the caller to write at top level.
+  proc writeNestedValue(outp: OutputStream, value: RemotingValue,
+                        ctx: SerializationContext,
+                        deferred: var seq[RemotingValue]) =
+    ## Writes a value in memberReference position (class member or array
+    ## element). The grammar (Section 2.7) forbids Arrays records there, so an
+    ## array is written as a MemberReference and its record deferred to the top
+    ## level.
+    if value.kind == rvArray:
+      let valuePtr = cast[pointer](value)
+      var id: int32
+      if ctx.hasWrittenObject(valuePtr):
+        id = ctx.getWrittenObjectId(valuePtr)
+      elif ctx.hasAssignedId(valuePtr):
+        # Already queued for deferred writing
+        id = ctx.getAssignedId(valuePtr)
+      else:
+        id = ctx.reserveIdForPointer(valuePtr)
+        deferred.add(value)
+      writeMemberReference(outp, MemberReference(
+        recordType: rtMemberReference,
+        idRef: id
+      ))
+    else:
+      writeRemotingValue(outp, value, ctx, deferred)
+
+  proc writeClassMembers(outp: OutputStream, members: seq[RemotingValue],
+                         info: ClassMetadataInfo, ctx: SerializationContext,
+                         deferred: var seq[RemotingValue]) =
     ## Writes class member values following a class record, according to the
     ## class metadata (Section 2.7: Classes = ... *(memberReference)).
     ## Members declared btPrimitive are written as MemberPrimitiveUnTyped (Section 2.3.2);
@@ -550,7 +578,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
           raise newException(ValueError, "Expected primitive member for btPrimitive type, got " & $member.kind)
         writeMemberPrimitiveUnTyped(outp, MemberPrimitiveUnTyped(value: member.primitiveVal))
       else:
-        writeRemotingValue(outp, member, ctx)
+        writeNestedValue(outp, member, ctx, deferred)
 
   let valuePtr = cast[pointer](value)
   
@@ -609,7 +637,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         recordToWrite.metadataId = metadataId
         writeClassWithId(outp, recordToWrite)
         # Member values follow, laid out per the referenced metadata
-        writeClassMembers(outp, value.classVal.members, info, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx, deferred)
 
       of rtSystemClassWithMembers:
         var recordToWrite = value.classVal.record.systemClassWithMembers
@@ -623,7 +651,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         )
         ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members following the header
-        writeClassMembers(outp, value.classVal.members, info, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx, deferred)
 
       of rtClassWithMembers:
         var recordToWrite = value.classVal.record.classWithMembers
@@ -637,7 +665,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         )
         ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members following the header
-        writeClassMembers(outp, value.classVal.members, info, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx, deferred)
 
       of rtSystemClassWithMembersAndTypes:
         var recordToWrite = value.classVal.record.systemClassWithMembersAndTypes
@@ -655,7 +683,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         )
         ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members according to their declared types in MemberTypeInfo
-        writeClassMembers(outp, value.classVal.members, info, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx, deferred)
 
       of rtClassWithMembersAndTypes:
         var recordToWrite = value.classVal.record.classWithMembersAndTypes
@@ -673,7 +701,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
         ctx.registerWrittenClassMetadata(originalId, id, info)
         # Write members according to their declared types in MemberTypeInfo
         # Section 2.3.2: Member values follow the class header and are written according to BinaryType
-        writeClassMembers(outp, value.classVal.members, info, ctx)
+        writeClassMembers(outp, value.classVal.members, info, ctx, deferred)
       else:
         raise newException(ValueError, "Unsupported class record kind for writing: " & $value.classVal.record.kind)
   of rvArray:
@@ -709,7 +737,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
               writeOptimizedNulls(outp, nullCount)
               nullCount = 0
             # Write the non-null element
-            writeRemotingValue(outp, elem, ctx)
+            writeNestedValue(outp, elem, ctx, deferred)
         # Write any trailing nulls
         if nullCount > 0:
           writeOptimizedNulls(outp, nullCount)
@@ -747,7 +775,7 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
              # Write the non-null element (String or Reference)
              if elem.kind notin {rvString, rvReference, rvNull}:
                 raise newException(ValueError, "Invalid element type for ArraySingleString: " & $elem.kind)
-             writeRemotingValue(outp, elem, ctx)
+             writeNestedValue(outp, elem, ctx, deferred)
         # Write any trailing nulls
         if nullCount > 0:
           writeOptimizedNulls(outp, nullCount)
@@ -783,12 +811,47 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
                 writeOptimizedNulls(outp, nullCount)
                 nullCount = 0
               # Write the non-null element
-              writeRemotingValue(outp, elem, ctx)
+              writeNestedValue(outp, elem, ctx, deferred)
           # Write any trailing nulls
           if nullCount > 0:
             writeOptimizedNulls(outp, nullCount)
       else:
         raise newException(ValueError, "Unsupported array record kind for writing: " & $arrayRecordVariant.kind)
+
+proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: SerializationContext) =
+  ## Writes a RemotingValue as a top-level referenceable record. Arrays nested
+  ## in member positions, disallowed inline by the grammar (Section 2.7), are
+  ## written as MemberReferences with their full records appended after this one.
+  var deferred: seq[RemotingValue]
+  writeRemotingValue(outp, value, ctx, deferred)
+  # Draining can defer more arrays (arrays of arrays), growing the queue
+  var i = 0
+  while i < deferred.len:
+    writeRemotingValue(outp, deferred[i], ctx, deferred)
+    inc i
+
+proc objectIdOf*(value: RemotingValue): int32 =
+  ## Object id of a class/array record; 0 for kinds that don't keep one
+  ## (primitives, nulls, references, strings)
+  case value.kind
+  of rvClass:
+    let rec = value.classVal.record
+    case rec.kind
+    of rtClassWithMembersAndTypes: rec.classWithMembersAndTypes.classInfo.objectId
+    of rtSystemClassWithMembersAndTypes: rec.systemClassWithMembersAndTypes.classInfo.objectId
+    of rtClassWithMembers: rec.classWithMembers.classInfo.objectId
+    of rtSystemClassWithMembers: rec.systemClassWithMembers.classInfo.objectId
+    of rtClassWithId: rec.classWithId.objectId
+    else: 0
+  of rvArray:
+    let rec = value.arrayVal.record
+    case rec.kind
+    of rtArraySingleObject: rec.arraySingleObject.arrayInfo.objectId
+    of rtArraySinglePrimitive: rec.arraySinglePrimitive.arrayInfo.objectId
+    of rtArraySingleString: rec.arraySingleString.arrayInfo.objectId
+    of rtBinaryArray: rec.binaryArray.objectId
+    else: 0
+  else: 0
 
 # String representation
 proc `$`*(valueWithCode: ValueWithCode): string =

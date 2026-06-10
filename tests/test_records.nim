@@ -1463,18 +1463,23 @@ suite "SerializationContext Tests":
     check deserialized.methodCall.get().messageEnum == {ArgsInArray, NoContext}
     check deserialized.methodCall.get().methodName.value.stringVal.value == "ComplexMethod"
     check deserialized.methodCallArray.len == 1
-    
-    # Check the complex array structure
-    check deserialized.methodCallArray[0].kind == rvArray
-    check deserialized.methodCallArray[0].arrayVal.elements.len == 2
-    check deserialized.methodCallArray[0].arrayVal.elements[0].kind == rvString
-    check deserialized.methodCallArray[0].arrayVal.elements[0].stringVal.value == "Array Item 1"
-    
-    # Check the nested array
-    check deserialized.methodCallArray[0].arrayVal.elements[1].kind == rvArray
-    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements.len == 2
-    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements[0].primitiveVal.int32Val == 100
-    check deserialized.methodCallArray[0].arrayVal.elements[1].arrayVal.elements[1].primitiveVal.int32Val == 200
+
+    # Arrays aren't allowed inline in member positions (Section 2.7), so the
+    # call array element is a MemberReference to a top-level record
+    check deserialized.methodCallArray[0].kind == rvReference
+    let argsArray = resolveReference(deserialized, deserialized.methodCallArray[0])
+    check argsArray.kind == rvArray
+    check argsArray.arrayVal.elements.len == 2
+    check argsArray.arrayVal.elements[0].kind == rvString
+    check argsArray.arrayVal.elements[0].stringVal.value == "Array Item 1"
+
+    # The nested array is likewise deferred and reached through a reference
+    check argsArray.arrayVal.elements[1].kind == rvReference
+    let nested = resolveReference(deserialized, argsArray.arrayVal.elements[1])
+    check nested.kind == rvArray
+    check nested.arrayVal.elements.len == 2
+    check nested.arrayVal.elements[0].primitiveVal.int32Val == 100
+    check nested.arrayVal.elements[1].primitiveVal.int32Val == 200
 
   test "Complex class value serialization and deserialization":
     # Create a simple class 
