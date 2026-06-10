@@ -9,12 +9,17 @@ RUN Invoke-WebRequest -Uri 'https://nim-lang.org/download/nim-2.2.10_x64.zip' -O
     Rename-Item -Path 'C:\nim-2.2.10' -NewName 'nim'; \
     Remove-Item 'nim.zip'
 
-# Install MinGit (needed by nimble to resolve git-based dependencies)
+# Install MinGW-w64
+RUN Invoke-WebRequest -Uri 'https://nim-lang.org/download/mingw64.zip' -OutFile 'mingw.zip'; \
+    Expand-Archive -Path 'mingw.zip' -DestinationPath 'C:\'; \
+    Remove-Item 'mingw.zip'
+
+# Install MinGit
 RUN Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/MinGit-2.54.0-64-bit.zip' -OutFile 'mingit.zip'; \
     Expand-Archive -Path 'mingit.zip' -DestinationPath 'C:\mingit'; \
     Remove-Item 'mingit.zip'
 
-RUN setx /M PATH ($Env:PATH + ';C:\nim\bin;C:\mingit\cmd')
+RUN setx /M PATH ($Env:PATH + ';C:\nim\bin;C:\mingw64\bin;C:\mingit\cmd')
 
 COPY . /app
 
