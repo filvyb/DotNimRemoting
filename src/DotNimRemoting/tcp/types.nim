@@ -13,7 +13,7 @@ const
   ChunkDelimiterBytes* = [byte 0x0D, 0x0A]
   # Largest single recv issued by recvExact, to avoid huge upfront buffers
   RecvChunkSize = 4096
-  DefaultMaxContentLength* = 64 * 1024 * 1024
+  DefaultMaxContentLength* = 64 * 1024 * 1024 * 10
 
 var maxContentLength* = DefaultMaxContentLength
   ## Upper bound for message content accepted from the network.

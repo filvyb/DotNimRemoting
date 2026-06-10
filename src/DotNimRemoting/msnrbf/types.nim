@@ -267,40 +267,42 @@ converter toDecimal*(f: float): Decimal =
   # Handle scientific notation
   if 'e' in str or 'E' in str:
     decimalStr = formatFloat(f, ffDecimal)
-  
+
+  # Separate the sign so rounding operates on the magnitude only
+  var sign = ""
+  if decimalStr.startsWith("-"):
+    sign = "-"
+    decimalStr = decimalStr[1..^1]
+
   # Find decimal point position
   let dotPos = decimalStr.find('.')
   var integralPart, fractionalPart: string
-  
+
   if dotPos == -1:
     integralPart = decimalStr
     fractionalPart = ""
   else:
     integralPart = decimalStr[0..<dotPos]
     fractionalPart = decimalStr[(dotPos+1)..^1]
-  
-  # Convert -0 integral part to just 0
-  if integralPart == "-0":
-    integralPart = "0"
-  
-  # Count digits (excluding sign)
-  let 
-    integralDigits = if integralPart.startsWith("-"): integralPart.len - 1 else: integralPart.len
+
+  # Count digits
+  let
+    integralDigits = integralPart.len
     totalDigits = integralDigits + fractionalPart.len
-  
+
   # Apply rounding rules
   if totalDigits > 29 and integralDigits <= 29:
     # Need to round to 29 total digits
     let digitsToKeep = 29 - integralDigits
-    
+
     if digitsToKeep <= 0:
       # No fractional part needed
-      result.value = integralPart
+      result.value = sign & integralPart
     elif digitsToKeep < fractionalPart.len:
       # Need to round the fractional part
       var roundedFractional = fractionalPart[0..<digitsToKeep]
       # Check the next digit for rounding
-      if digitsToKeep < fractionalPart.len and ord(fractionalPart[digitsToKeep]) >= ord('5'):
+      if ord(fractionalPart[digitsToKeep]) >= ord('5'):
         # Implement rounding
         var carry = 1
         var rounded = newString(digitsToKeep)
@@ -312,34 +314,29 @@ converter toDecimal*(f: float): Decimal =
           else:
             carry = 0
           rounded[i] = chr(digit + ord('0'))
-        
+
         # If we have a carry after processing all fractional digits
         if carry > 0:
-          # Need to increment the integral part
-          var intVal = if integralPart.startsWith("-"): 
-                         -parseInt(integralPart[1..^1])
-                       else:
-                         parseInt(integralPart)
-          intVal += carry
-          integralPart = $intVal
-          roundedFractional = rounded
-        else:
-          roundedFractional = rounded
-      
+          # Carry into the integral part of the magnitude
+          integralPart = $(parseInt(integralPart) + carry)
+        roundedFractional = rounded
+
       # Construct final decimal string
-      result.value = integralPart & "." & roundedFractional
+      result.value = sign & integralPart & "." & roundedFractional
     else:
       # Keep all fractional digits
-      result.value = integralPart & "." & fractionalPart
+      result.value = sign & integralPart & "." & fractionalPart
   else:
     # No rounding needed
-    result.value = decimalStr
-  
+    result.value = sign & decimalStr
+
   # Clean up trailing zeros in fractional part
   if '.' in result.value:
-    result.value = result.value.strip(trailing = true, chars = {'0'})
-    if result.value.endsWith("."): 
+    result.value = result.value.strip(leading = false, trailing = true, chars = {'0'})
+    if result.value.endsWith("."):
       result.value = result.value[0..^2]
+  if result.value == "-0":
+    result.value = "0"
 
 proc writeDecimal*(outp: OutputStream, d: Decimal) =
   ## Writes decimal as length-prefixed string
