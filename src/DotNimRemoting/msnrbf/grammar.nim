@@ -47,10 +47,29 @@ proc `$`*(msg: RemotingMessage): string =
       parts.add("    Record[" & $i & "]: kind=" & $record.kind)
   
   parts.add("  End of RemotingMessage " & $msg.tail.recordType)
-  
+
   return parts.join("\n")
 
 
+const
+  callArrayFlags = {MessageFlag.ArgsIsArray, MessageFlag.ArgsInArray,
+                    MessageFlag.ContextInArray, MessageFlag.MethodSignatureInArray,
+                    MessageFlag.PropertyInArray, MessageFlag.GenericMethod}
+    ## Flags that indicate a MethodCallArray record follows the
+    ## BinaryMethodCall record (sections 2.2.1.1, 2.2.3.2)
+  returnArrayFlags = {MessageFlag.ReturnValueInArray, MessageFlag.ArgsIsArray,
+                      MessageFlag.ArgsInArray, MessageFlag.ContextInArray,
+                      MessageFlag.ExceptionInArray, MessageFlag.PropertyInArray}
+    ## Flags that indicate a MethodReturnCallArray record follows the
+    ## BinaryMethodReturn record (sections 2.2.1.1, 2.2.3.4)
+
+proc needsCallArray*(call: BinaryMethodCall): bool =
+  ## Whether the message flags require a MethodCallArray record
+  call.messageEnum * callArrayFlags != {}
+
+proc needsCallArray*(ret: BinaryMethodReturn): bool =
+  ## Whether the message flags require a MethodReturnCallArray record
+  ret.messageEnum * returnArrayFlags != {}
 
 proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: BinaryMethodCall, array: seq[RemotingValue]] =
   ## Reads a method call + optional array
@@ -73,12 +92,7 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     raise newException(IOError, "Expected BinaryLibrary or BinaryMethodCall, got " & $nextRecord)
 
   # Handle optional call array based on flags
-  if MessageFlag.ArgsIsArray in result.call.messageEnum or
-     MessageFlag.ArgsInArray in result.call.messageEnum or
-     MessageFlag.ContextInArray in result.call.messageEnum or
-     MessageFlag.MethodSignatureInArray in result.call.messageEnum or
-     MessageFlag.GenericMethod in result.call.messageEnum:
-    
+  if needsCallArray(result.call):
     if not inp.readable:
       raise newException(IOError, "End of stream while reading call array")
       
@@ -123,13 +137,8 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
   else:
     raise newException(IOError, "Expected BinaryLibrary or BinaryMethodReturn, got " & $nextRecord)
 
-  # Handle optional return array based on flags  
-  if MessageFlag.ReturnValueInArray in result.ret.messageEnum or
-     MessageFlag.ArgsInArray in result.ret.messageEnum or
-     MessageFlag.ArgsIsArray in result.ret.messageEnum or
-     MessageFlag.ContextInArray in result.ret.messageEnum or
-     MessageFlag.ExceptionInArray in result.ret.messageEnum:
-     
+  # Handle optional return array based on flags
+  if needsCallArray(result.ret):
     if not inp.readable:
       raise newException(IOError, "End of stream while reading return array")
       
@@ -242,11 +251,7 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
   writeBinaryMethodCall(outp, call)
 
   # Determine if a call array is required based on the messageEnum flags
-  if MessageFlag.ArgsIsArray in call.messageEnum or
-     MessageFlag.ArgsInArray in call.messageEnum or
-     MessageFlag.ContextInArray in call.messageEnum or
-     MessageFlag.MethodSignatureInArray in call.messageEnum or
-     MessageFlag.GenericMethod in call.messageEnum:
+  if needsCallArray(call):
     # Validate that array elements are provided
     if array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
@@ -269,11 +274,7 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
   writeBinaryMethodReturn(outp, ret)
 
   # Write return array if specified in flags
-  if MessageFlag.ReturnValueInArray in ret.messageEnum or 
-     MessageFlag.ArgsInArray in ret.messageEnum or 
-     MessageFlag.ArgsIsArray in ret.messageEnum or
-     MessageFlag.ContextInArray in ret.messageEnum or 
-     MessageFlag.ExceptionInArray in ret.messageEnum:
+  if needsCallArray(ret):
     # Validate that array elements are provided
     if array.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
@@ -339,24 +340,13 @@ proc newRemotingMessage*(ctx: SerializationContext,
     raise newException(ValueError, "Cannot have both method call and return")
 
   # Determine if a call array is needed based on message flags
-  var needsCallArray = false
-  if methodCall.isSome:
-    let call = methodCall.get
-    needsCallArray = MessageFlag.ArgsInArray in call.messageEnum or
-                     MessageFlag.ArgsIsArray in call.messageEnum or
-                     MessageFlag.ContextInArray in call.messageEnum or
-                     MessageFlag.MethodSignatureInArray in call.messageEnum or
-                     MessageFlag.GenericMethod in call.messageEnum
-  elif methodReturn.isSome:
-    let ret = methodReturn.get
-    needsCallArray = MessageFlag.ReturnValueInArray in ret.messageEnum or
-                     MessageFlag.ArgsInArray in ret.messageEnum or
-                     MessageFlag.ContextInArray in ret.messageEnum or
-                     MessageFlag.ExceptionInArray in ret.messageEnum
+  let hasCallArray =
+    if methodCall.isSome: needsCallArray(methodCall.get)
+    else: needsCallArray(methodReturn.get)
 
   # Determine rootId based on whether we need a call array
   var rootId: int32 = 0
-  if needsCallArray:
+  if hasCallArray:
     if callArray.len == 0:
       raise newException(ValueError, "Call array expected but none provided")
     # Use first available ID for rootId
@@ -366,7 +356,7 @@ proc newRemotingMessage*(ctx: SerializationContext,
   let header = SerializationHeaderRecord(
     recordType: rtSerializedStreamHeader,
     rootId: rootId,
-    headerId: if needsCallArray: -1 else: 0,
+    headerId: if hasCallArray: -1 else: 0,
     majorVersion: 1,
     minorVersion: 0
   )

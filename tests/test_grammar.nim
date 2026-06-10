@@ -367,3 +367,61 @@ suite "RemotingMessage serialization and deserialization":
     check deserialized.methodCallArray[0].kind == rvString
     check deserialized.methodCallArray[0].stringVal.value == "System.Int32"
     check deserialized.tail.recordType == rtMessageEnd
+
+  test "method return with arguments as call array items":
+    let binaryMethodReturn = BinaryMethodReturn(
+      recordType: rtMethodReturn,
+      messageEnum: {ArgsIsArray, NoContext, NoReturnValue}
+    )
+    let arg1 = RemotingValue(
+      kind: rvPrimitive,
+      primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 7)
+    )
+    let arg2 = RemotingValue(
+      kind: rvPrimitive,
+      primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 9)
+    )
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodReturn = some(binaryMethodReturn), callArray = @[arg1, arg2])
+    check msg.header.rootId == 1
+    check msg.header.headerId == -1
+    let serialized = serializeRemotingMessage(msg, ctx)
+    let deserialized = deserializeRemotingMessage(serialized)
+    check deserialized.header.rootId == 1
+    check deserialized.header.headerId == -1
+    check deserialized.methodReturn.isSome
+    let methodReturn = deserialized.methodReturn.get()
+    check methodReturn.messageEnum == {ArgsIsArray, NoContext, NoReturnValue}
+    check deserialized.methodCallArray.len == 2
+    check deserialized.methodCallArray[0].primitiveVal.int32Val == 7
+    check deserialized.methodCallArray[1].primitiveVal.int32Val == 9
+    check deserialized.tail.recordType == rtMessageEnd
+
+  test "method call with message properties in call array":
+    let methodName = newStringValueWithCode("Notify")
+    let typeName = newStringValueWithCode("EventService")
+    let binaryMethodCall = BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {NoArgs, NoContext, PropertyInArray},
+      methodName: methodName,
+      typeName: typeName
+    )
+    let propertyValue = RemotingValue(
+      kind: rvString,
+      stringVal: LengthPrefixedString(value: "property entry")
+    )
+    let ctx = newSerializationContext()
+    var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[propertyValue])
+    check msg.header.rootId == 1
+    check msg.header.headerId == -1
+    let serialized = serializeRemotingMessage(msg, ctx)
+    let deserialized = deserializeRemotingMessage(serialized)
+    check deserialized.header.rootId == 1
+    check deserialized.header.headerId == -1
+    check deserialized.methodCall.isSome
+    let methodCall = deserialized.methodCall.get()
+    check methodCall.messageEnum == {NoArgs, NoContext, PropertyInArray}
+    check deserialized.methodCallArray.len == 1
+    check deserialized.methodCallArray[0].kind == rvString
+    check deserialized.methodCallArray[0].stringVal.value == "property entry"
+    check deserialized.tail.recordType == rtMessageEnd
