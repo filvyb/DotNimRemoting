@@ -20,6 +20,7 @@ WORKDIR /app/tests/dotnet/Client
 RUN msbuild Client.csproj /p:Configuration=Release
 
 WORKDIR /app
+RUN nimble install -d -y
 RUN nim c tests/nim/client.nim
 RUN nim c tests/nim/server.nim
 

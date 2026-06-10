@@ -10,3 +10,6 @@ nimbledeps
 tests/dotnet/out/
 tests/nim/client
 tests/nim/server
+
+\[MS-NRTP]\.txt
+\[MS-NRBF]\.txt
