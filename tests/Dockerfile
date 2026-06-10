@@ -9,7 +9,12 @@ RUN Invoke-WebRequest -Uri 'https://nim-lang.org/download/nim-2.2.10_x64.zip' -O
     Rename-Item -Path 'C:\nim-2.2.10' -NewName 'nim'; \
     Remove-Item 'nim.zip'
 
-RUN setx /M PATH ($Env:PATH + ';C:\nim\bin')
+# Install MinGit (needed by nimble to resolve git-based dependencies)
+RUN Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/MinGit-2.54.0-64-bit.zip' -OutFile 'mingit.zip'; \
+    Expand-Archive -Path 'mingit.zip' -DestinationPath 'C:\mingit'; \
+    Remove-Item 'mingit.zip'
+
+RUN setx /M PATH ($Env:PATH + ';C:\nim\bin;C:\mingit\cmd')
 
 COPY . /app
 
@@ -20,7 +25,7 @@ WORKDIR /app/tests/dotnet/Client
 RUN msbuild Client.csproj /p:Configuration=Release
 
 WORKDIR /app
-RUN nimble install -d -y
+RUN nimble install --solver:legacy -d -y
 RUN nim c tests/nim/client.nim
 RUN nim c tests/nim/server.nim
 
