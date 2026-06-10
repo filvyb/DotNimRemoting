@@ -1,8 +1,11 @@
 import unittest
-import asyncnet, asyncdispatch
+import asyncnet, asyncdispatch, options
 import faststreams/outputs
 import DotNimRemoting/tcp/[server, types, helpers, common]
 import DotNimRemoting/msnrbf/helpers as msnrbf_helpers
+import DotNimRemoting/msnrbf/[enums, context, grammar]
+import DotNimRemoting/msnrbf/types as msnrbf_types
+import DotNimRemoting/msnrbf/records/methodinv
 
 proc echoHandler(requestUri, methodName, typeName: string,
                  requestData: seq[byte]): Future[seq[byte]] {.async.} =
@@ -60,3 +63,54 @@ suite "NRTP TCP Server Tests":
     check ret.stringVal.value == "pong"
 
     waitFor srv.stop()
+
+suite "Method call argument extraction":
+  test "extractMethodCallArgs handles inline args":
+    let request = createMethodCallRequest("M", "Type.Server",
+      @[int32Value(42), stringValue("hi")])
+    let args = extractMethodCallArgs(deserializeRemotingMessage(request))
+    check args.len == 2
+    check args[0].kind == ptInt32
+    check args[0].int32Val == 42
+    check args[1].kind == ptString
+    check args[1].stringVal.value == "hi"
+
+  test "extractMethodCallArgs handles no args":
+    let request = createMethodCallRequest("M", "Type.Server")
+    check extractMethodCallArgs(deserializeRemotingMessage(request)).len == 0
+
+  test "extractMethodCallArgs handles one call-array element per arg (ArgsIsArray)":
+    # .NET/Mono clients use this layout when an argument is e.g. DateTime,
+    # TimeSpan or char, which they never inline in the method-call record.
+    var call = methodCallBasic("M", "Type.Server")
+    call.messageEnum = {MessageFlag.NoContext, MessageFlag.ArgsIsArray}
+    let callArray = @[
+      RemotingValue(kind: rvPrimitive,
+        primitiveVal: dateTimeValue(637_500_000_000_000_000'i64, 1)),
+      RemotingValue(kind: rvString,
+        stringVal: LengthPrefixedString(value: "hi"))]
+    let ctx = newSerializationContext()
+    let msg = newRemotingMessage(ctx, methodCall = some(call), callArray = callArray)
+    let args = extractMethodCallArgs(deserializeRemotingMessage(serializeRemotingMessage(msg)))
+    check args.len == 2
+    check args[0].kind == ptDateTime
+    check args[0].dateTimeVal.ticks == 637_500_000_000_000_000'i64
+    check args[0].dateTimeVal.kind == 1
+    check args[1].kind == ptString
+    check args[1].stringVal.value == "hi"
+
+  test "extractMethodCallArgs handles args array in call array (ArgsInArray)":
+    let (call, _) = methodCallArrayArgs("M", "Type.Server")
+    let argsArray = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+      record: ArrayRecord(kind: rtArraySingleObject,
+        arraySingleObject: arraySingleObject(2)),
+      elements: @[
+        RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(7)),
+        RemotingValue(kind: rvNull)]))
+    let ctx = newSerializationContext()
+    let msg = newRemotingMessage(ctx, methodCall = some(call), callArray = @[argsArray])
+    let args = extractMethodCallArgs(deserializeRemotingMessage(serializeRemotingMessage(msg)))
+    check args.len == 2
+    check args[0].kind == ptInt32
+    check args[0].int32Val == 7
+    check args[1].kind == ptNull

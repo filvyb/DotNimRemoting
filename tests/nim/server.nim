@@ -19,24 +19,39 @@ proc serviceHandler(requestUri, methodName, typeName: string,
   # method name has to be read from the parsed call itself.
   let call = msg.methodCall.get
   let name = call.methodName.value.stringVal.value
-  let args = call.args
+  let args = extractMethodCallArgs(msg)
   case name
   of "Echo":
-    return createMethodReturnResponse(stringValue(args[0].value.stringVal.value))
+    return createMethodReturnResponse(stringValue(args[0].stringVal.value))
   of "Concat":
     return createMethodReturnResponse(
-      stringValue(args[0].value.stringVal.value & args[1].value.stringVal.value))
+      stringValue(args[0].stringVal.value & args[1].stringVal.value))
   of "Add":
     return createMethodReturnResponse(
-      int32Value(args[0].value.int32Val + args[1].value.int32Val))
+      int32Value(args[0].int32Val + args[1].int32Val))
   of "Sum":
     return createMethodReturnResponse(
-      int64Value(args[0].value.int64Val + args[1].value.int64Val))
+      int64Value(args[0].int64Val + args[1].int64Val))
   of "Multiply":
     return createMethodReturnResponse(
-      doubleValue(args[0].value.doubleVal * args[1].value.doubleVal))
+      doubleValue(args[0].doubleVal * args[1].doubleVal))
   of "IsPositive":
-    return createMethodReturnResponse(boolValue(args[0].value.int32Val > 0))
+    return createMethodReturnResponse(boolValue(args[0].int32Val > 0))
+  of "EchoDecimal", "EchoDateTime", "EchoTimeSpan", "EchoChar",
+     "EchoUInt16", "EchoUInt32", "EchoUInt64":
+    # Pure round-trips: send the parsed argument straight back.
+    return createMethodReturnResponse(args[0])
+  of "MultiplyFloat":
+    return createMethodReturnResponse(
+      singleValue(args[0].singleVal * args[1].singleVal))
+  of "IncrementByte":
+    return createMethodReturnResponse(byteValue(args[0].byteVal + 1))
+  of "NegateSByte":
+    return createMethodReturnResponse(sbyteValue(-args[0].sbyteVal))
+  of "NegateShort":
+    return createMethodReturnResponse(int16Value(-args[0].int16Val))
+  of "Ping":
+    return createMethodReturnResponse()
   else:
     # Unknown method: reply void so the client sees a well-formed response.
     return createMethodReturnResponse()

@@ -14,5 +14,27 @@ namespace DotNimTester.Lib
         double Multiply(double a, double b);
         // int arg -> bool
         bool IsPositive(int value);
+        // decimal round-trip (serialized as length-prefixed string)
+        decimal EchoDecimal(decimal value);
+        // DateTime round-trip (ticks + kind bit-packed into 8 bytes)
+        System.DateTime EchoDateTime(System.DateTime value);
+        // TimeSpan round-trip (int64 ticks)
+        System.TimeSpan EchoTimeSpan(System.TimeSpan value);
+        // two float args -> float (single precision)
+        float MultiplyFloat(float a, float b);
+        // char round-trip (UTF-8 on the wire)
+        char EchoChar(char value);
+        // byte arithmetic
+        byte IncrementByte(byte value);
+        // sbyte arithmetic
+        sbyte NegateSByte(sbyte value);
+        // short arithmetic
+        short NegateShort(short value);
+        // unsigned round-trips
+        ushort EchoUInt16(ushort value);
+        uint EchoUInt32(uint value);
+        ulong EchoUInt64(ulong value);
+        // void return
+        void Ping();
     }
 }

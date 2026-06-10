@@ -41,6 +41,32 @@ proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveV
   # Serialize to bytes
   return serializeRemotingMessage(msg)
 
+proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue =
+  ## Converts a RemotingValue holding a primitive or string into a
+  ## PrimitiveValue; anything else (class, array, reference) maps to ptNull.
+  case rv.kind
+  of rvPrimitive: rv.primitiveVal
+  of rvString: PrimitiveValue(kind: ptString, stringVal: rv.stringVal)
+  else: PrimitiveValue(kind: ptNull)
+
+proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue] =
+  ## Extracts the primitive arguments of a method call regardless of the wire
+  ## layout chosen by the sender. Returns an empty sequence if there are no arguments or if
+  ## the message does not contain a method call.
+  if msg.methodCall.isNone:
+    return @[]
+  let call = msg.methodCall.get
+  if MessageFlag.ArgsInline in call.messageEnum:
+    for arg in call.args:
+      result.add(arg.value)
+  elif MessageFlag.ArgsIsArray in call.messageEnum:
+    for elem in msg.methodCallArray:
+      result.add(toPrimitiveValue(elem))
+  elif MessageFlag.ArgsInArray in call.messageEnum:
+    if msg.methodCallArray.len > 0 and msg.methodCallArray[0].kind == rvArray:
+      for elem in msg.methodCallArray[0].arrayVal.elements:
+        result.add(toPrimitiveValue(elem))
+
 proc extractMethodCallInfo*(data: seq[byte]): tuple[methodName, typeName: string, isOneWay: bool] =
   ## Extracts method name and type name from serialized message content
   
