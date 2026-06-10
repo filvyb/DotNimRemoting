@@ -94,9 +94,7 @@ proc readAdditionalTypeInfo*(inp: InputStream, btype: BinaryType): AdditionalTyp
   case btype
   of btPrimitive, btPrimitiveArray:
     # For primitive types, read the PrimitiveTypeEnum value
-    if not inp.readable:
-      raise newException(IOError, "Missing primitive type info")
-    result.primitiveType = PrimitiveType(inp.read())
+    result.primitiveType = readPrimitiveType(inp)
     
     # Validate primitive type - String and Null are not valid here
     if result.primitiveType in {ptString, ptNull}:
@@ -143,9 +141,7 @@ proc readMemberTypeInfo*(inp: InputStream, memberCount: int): MemberTypeInfo =
   
   # First read all binary types
   for i in 0..<memberCount:
-    if not inp.readable:
-      raise newException(IOError, "Incomplete MemberTypeInfo data")
-    result.binaryTypes.add(BinaryType(inp.read()))
+    result.binaryTypes.add(readBinaryType(inp))
 
   # Then read additional info based on binary type
   for btype in result.binaryTypes:

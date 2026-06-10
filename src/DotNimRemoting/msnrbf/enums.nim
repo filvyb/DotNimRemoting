@@ -152,18 +152,53 @@ proc validateMessageFlags*(flags: MessageFlags) =
 # Reading procedures
 proc peekRecord*(inp: InputStream): RecordType =
   ## Peeks record type from stream without advancing position
-  if inp.readable:
-    result = RecordType(inp.peek)
+  ## Raises IOError on end of stream or invalid value
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading record type")
+  let value = inp.peek
+  if value > byte(high(RecordType)):
+    raise newException(IOError, "Invalid record type value: " & $value)
+  result = RecordType(value)
 
 proc readRecord*(inp: InputStream): RecordType =
   ## Reads record type from stream
-  if inp.readable:
-    result = RecordType(inp.read())
+  ## Raises IOError on end of stream or invalid value
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading record type")
+  let value = inp.read()
+  if value > byte(high(RecordType)):
+    raise newException(IOError, "Invalid record type value: " & $value)
+  result = RecordType(value)
 
 proc readBinaryArrayType*(inp: InputStream): BinaryArrayType =
   ## Reads binary array type from stream
-  if inp.readable:
-    result = BinaryArrayType(inp.read())
+  ## Raises IOError on end of stream or invalid value
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading binary array type")
+  let value = inp.read()
+  if value > byte(high(BinaryArrayType)):
+    raise newException(IOError, "Invalid binary array type value: " & $value)
+  result = BinaryArrayType(value)
+
+proc readPrimitiveType*(inp: InputStream): PrimitiveType =
+  ## Reads primitive type from stream
+  ## Raises IOError on end of stream or invalid value
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading primitive type")
+  let value = inp.read()
+  if value > byte(high(PrimitiveType)):
+    raise newException(IOError, "Invalid primitive type value: " & $value)
+  result = PrimitiveType(value)
+
+proc readBinaryType*(inp: InputStream): BinaryType =
+  ## Reads binary type from stream
+  ## Raises IOError on end of stream or invalid value
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading binary type")
+  let value = inp.read()
+  if value > byte(high(BinaryType)):
+    raise newException(IOError, "Invalid binary type value: " & $value)
+  result = BinaryType(value)
 
 proc readMessageFlags*(inp: InputStream): MessageFlags =
   ## Reads message flags from stream (as 32-bit value)

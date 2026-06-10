@@ -210,18 +210,12 @@ proc readOptimizedNulls*(inp: InputStream, recordType: RecordType): int32 =
 
 proc readValueWithCode*(inp: InputStream): ValueWithCode =
   ## Reads ValueWithCode structure from stream
-  if not inp.readable:
-    raise newException(IOError, "Missing primitive type")
-    
-  result.primitiveType = PrimitiveType(inp.read)
+  result.primitiveType = readPrimitiveType(inp)
   result.value = readPrimitiveValue(inp, result.primitiveType)
 
 proc readStringValueWithCode*(inp: InputStream): StringValueWithCode =
   ## Reads StringValueWithCode structure from stream
-  if not inp.readable:
-    raise newException(IOError, "Missing primitive type")
-    
-  result.primitiveType = PrimitiveType(inp.read)
+  result.primitiveType = readPrimitiveType(inp)
   if result.primitiveType != ptString:
     raise newException(IOError, "Expected String primitive type (18)")
     

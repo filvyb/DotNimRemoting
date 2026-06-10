@@ -127,20 +127,22 @@ proc readDateTime*(inp: InputStream): DateTime =
 proc readLengthPrefixedString*(inp: InputStream): LengthPrefixedString =
   ## Reads a length-prefixed string from stream using variable length encoding
   var length = 0
-  var shift = 0
-  
-  # Read 7 bits at a time until high bit is 0
-  while inp.readable:
+
+  # Length is at most 5 bytes
+  for i in 0..4:
+    if not inp.readable:
+      raise newException(IOError, "End of stream while reading string length")
     let b = inp.read
-    length = length or ((int(b and 0x7F)) shl shift)
+    length = length or ((int(b and 0x7F)) shl (7 * i))
     if (b and 0x80) == 0:
       break
-    shift += 7
-    if shift > 35:
+    if i == 4:
       raise newException(IOError, "Invalid string length encoding")
 
   # Read the actual string data
   if length > 0:
+    if not inp.readable(length):
+      raise newException(IOError, "Incomplete string data")
     var buffer = newString(length)
     if inp.readInto(buffer.toOpenArrayByte(0, length-1)):
       result.value = buffer

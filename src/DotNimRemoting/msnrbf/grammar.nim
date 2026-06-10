@@ -60,7 +60,7 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     raise newException(IOError, "End of stream while reading method call")
 
   # Check for optional library
-  let nextRecord = RecordType(inp.peek)
+  let nextRecord = peekRecord(inp)
   if nextRecord == rtBinaryLibrary:
     let library = readBinaryLibrary(inp)
     ctx.addLibrary(library)
@@ -82,7 +82,7 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
     if not inp.readable:
       raise newException(IOError, "End of stream while reading call array")
       
-    let arrayRecord = RecordType(inp.peek)
+    let arrayRecord = peekRecord(inp)
     if arrayRecord != rtArraySingleObject:
       raise newException(IOError, "Expected ArraySingleObject for call array, got " & $arrayRecord)
 
@@ -111,7 +111,7 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
     raise newException(IOError, "End of stream while reading method return")
 
   # Check for optional library
-  let nextRecord = RecordType(inp.peek)
+  let nextRecord = peekRecord(inp)
   if nextRecord == rtBinaryLibrary:
     let library = readBinaryLibrary(inp)
     ctx.addLibrary(library)
@@ -133,7 +133,7 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
     if not inp.readable:
       raise newException(IOError, "End of stream while reading return array")
       
-    let arrayRecord = RecordType(inp.peek)
+    let arrayRecord = peekRecord(inp)
     if arrayRecord != rtArraySingleObject:
       raise newException(IOError, "Expected ArraySingleObject for return array, got " & $arrayRecord)
 
@@ -166,14 +166,14 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   if not inp.readable:
     raise newException(IOError, "Empty stream")
     
-  let headerType = RecordType(inp.peek)
+  let headerType = peekRecord(inp)
   if headerType != rtSerializedStreamHeader:
     raise newException(IOError, "Expected SerializationHeader, got " & $headerType)
   result.header = readSerializationHeader(inp)
 
   # Read preceding referenceable records until we hit method call/return
   while inp.readable:
-    let nextType = RecordType(inp.peek)
+    let nextType = peekRecord(inp)
     
     # Found method - break loop
     if nextType in {rtMethodCall, rtMethodReturn}:
@@ -197,7 +197,7 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   if not inp.readable:
     raise newException(IOError, "End of stream before method")
     
-  let methodType = RecordType(inp.peek)
+  let methodType = peekRecord(inp)
   case methodType:
   of rtMethodCall:
     let (call, array) = readMethodCall(inp, ctx)
@@ -212,7 +212,7 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
 
   # Read trailing referenceable records until MessageEnd
   while inp.readable:
-    let nextType = RecordType(inp.peek)
+    let nextType = peekRecord(inp)
 
     # Found end marker
     if nextType == rtMessageEnd:

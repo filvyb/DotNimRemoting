@@ -82,7 +82,12 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
       
       if isOneWay:
         debugLog "[SERVER] Processing one-way request"
-        discard handler(requestUri, "", "", requestData)
+        # One-way requests get no reply, so swallow handler failures here
+        # instead of letting the outer handler send an error frame
+        try:
+          discard await handler(requestUri, "", "", requestData)
+        except CatchableError as e:
+          debugLog "[SERVER] One-way handler failed: ", e.msg
       else:
         debugLog "[SERVER] Processing request and preparing response"
         let responseData = await handler(requestUri, "", "", requestData)

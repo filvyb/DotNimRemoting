@@ -147,9 +147,7 @@ proc readMemberPrimitiveTyped*(inp: InputStream): MemberPrimitiveTyped =
   if result.recordType != rtMemberPrimitiveTyped:
     raise newException(IOError, "Invalid member primitive typed record type")
 
-  if not inp.readable:
-    raise newException(IOError, "Missing primitive type")
-  let primitiveType = PrimitiveType(inp.read)
+  let primitiveType = readPrimitiveType(inp)
 
   # Validate primitive type
   if primitiveType in {ptString, ptNull, ptUnused}:

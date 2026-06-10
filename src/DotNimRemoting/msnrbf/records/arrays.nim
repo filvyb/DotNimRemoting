@@ -87,17 +87,13 @@ proc readBinaryArray*(inp: InputStream): BinaryArray =
       result.lowerBounds.add(bound)
 
   # Read type information
-  if not inp.readable:
-    raise newException(IOError, "Missing array item type enum")
-  result.typeEnum = BinaryType(inp.read())
+  result.typeEnum = readBinaryType(inp)
 
   # Read additional type info based on BinaryType
   case result.typeEnum
   of btPrimitive, btPrimitiveArray:
     # For primitive types, read the PrimitiveTypeEnum
-    if not inp.readable:
-      raise newException(IOError, "Missing primitive type info")
-    let primType = PrimitiveType(inp.read())
+    let primType = readPrimitiveType(inp)
     if primType in {ptString, ptNull}:
       raise newException(IOError, "Invalid primitive array type: " & $primType)
     case result.typeEnum
@@ -138,10 +134,7 @@ proc readArraySinglePrimitive*(inp: InputStream): ArraySinglePrimitive =
   result.arrayInfo = readArrayInfo(inp)
   
   # Read primitive type
-  if not inp.readable:
-    raise newException(IOError, "Missing primitive type")
-    
-  result.primitiveType = PrimitiveType(inp.read())
+  result.primitiveType = readPrimitiveType(inp)
   if result.primitiveType in {ptNull, ptString}:
     raise newException(IOError, "Invalid primitive array type: " & $result.primitiveType)
 
