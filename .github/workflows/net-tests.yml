@@ -17,22 +17,18 @@ jobs:
       run: |
         docker build -t dotnet-nim-test -f tests/Dockerfile .
 
-    - name: Run Tests
-      run: |
-        docker run --rm dotnet-nim-test powershell -Command "
-          Start-Process -NoNewWindow -FilePath 'C:/app/tests/dotnet/Server/bin/Release/Server.exe'
-          Start-Sleep -Seconds 10
-          & 'C:/app/tests/nim/client.exe'
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Stop-Process -Name 'Server' -Force
-        "
+    - name: Run Tests (Nim client -> .NET server)
+      run: >
+        docker run --rm dotnet-nim-test powershell -File C:\app\tests\run-interop-test.ps1
+        -ServerExe 'C:\app\tests\dotnet\Server\bin\Release\Server.exe'
+        -Port 8080
+        -ClientExe 'C:\app\tests\nim\client.exe'
+        -ServerKeepStdin
 
-    - name: Run Reverse Tests
-      run: |
-        docker run --rm dotnet-nim-test powershell -Command "
-          Start-Process -NoNewWindow -FilePath 'C:/app/tests/nim/server.exe'
-          Start-Sleep -Seconds 10
-          & 'C:/app/tests/dotnet/Client/bin/Release/Client.exe' 'tcp://localhost:8081/EchoService'
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Stop-Process -Name 'server' -Force
-        "
+    - name: Run Reverse Tests (.NET client -> Nim server)
+      run: >
+        docker run --rm dotnet-nim-test powershell -File C:\app\tests\run-interop-test.ps1
+        -ServerExe 'C:\app\tests\nim\server.exe'
+        -Port 8081
+        -ClientExe 'C:\app\tests\dotnet\Client\bin\Release\Client.exe'
+        -ClientArgs 'tcp://127.0.0.1:8081/EchoService'
