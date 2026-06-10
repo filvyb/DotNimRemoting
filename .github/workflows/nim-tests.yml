@@ -7,7 +7,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        nim-version: ['2.0.14', '2.2.0']
+        nim-version: ['2.0.16', '2.2.10']
         arch: [x64, arm64]
         exclude:
           # GitHub doesn't provide Windows ARM runners yet
