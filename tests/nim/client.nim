@@ -1,13 +1,25 @@
 import ../../src/DotNimRemoting/tcp/[client]
-import ../../src/DotNimRemoting/msnrbf/[helpers, enums, types]
-import asyncdispatch, strutils
+import ../../src/DotNimRemoting/msnrbf/[grammar, helpers, enums, types]
+import ../../src/DotNimRemoting/msnrbf/records/[methodinv, serialization]
+import asyncdispatch, strutils, options
+import interop
 
 # Direction 1: Nim client -> .NET (Mono) server.
 # Exercises every IEchoService method and verifies the typed return value,
 # exiting non-zero on the first mismatch so the runner script reports failure.
 
+const typename = "DotNimTester.Lib.IEchoService, Lib"
+
+proc callComplex(client: NrtpTcpClient, methodName: string,
+                 args: seq[RemotingValue],
+                 libraries: seq[BinaryLibrary] = @[]): Future[RemotingMessage] {.async.} =
+  ## Invokes a method whose arguments or return value are classes/arrays and
+  ## returns the parsed response message for the caller to pick apart
+  let requestData = createComplexMethodCallRequest(methodName, typename, args, libraries)
+  let responseData = await client.invoke(methodName, typename, false, requestData)
+  return deserializeRemotingMessage(responseData)
+
 proc main() {.async.} =
-  let typename = "DotNimTester.Lib.IEchoService, Lib"
   let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
   await client.connect()
 
@@ -184,6 +196,121 @@ proc main() {.async.} =
     let r = await client.callMethod("Ping", typename)
     echo "Ping -> ", r.kind
     doAssert r.kind == ptNull, "Ping: expected null (void), got " & $r.kind
+
+  block echoIntArray:
+    let sent = @[1'i32, 2, 3, -4]
+    let msg = await client.callComplex("EchoIntArray", @[int32ArrayValue(sent)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoIntArray: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoIntArray -> ", elems.len, " elements"
+    doAssert elems.len == sent.len
+    for i, v in sent:
+      doAssert elems[i].kind == rvPrimitive and elems[i].primitiveVal.kind == ptInt32
+      doAssert elems[i].primitiveVal.int32Val == v,
+        "EchoIntArray[" & $i & "]: expected " & $v & ", got " & $elems[i].primitiveVal.int32Val
+
+  block echoIntArrayEmpty:
+    let msg = await client.callComplex("EchoIntArray", @[int32ArrayValue(@[])])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoIntArray(empty): expected array, got " & $r.kind
+    echo "EchoIntArray(empty) -> ", r.arrayVal.elements.len, " elements"
+    doAssert r.arrayVal.elements.len == 0
+
+  block echoDoubleArray:
+    let sent = @[1.5'f64, -2.25, 0.0]
+    let msg = await client.callComplex("EchoDoubleArray", @[doubleArrayValue(sent)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoDoubleArray: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoDoubleArray -> ", elems.len, " elements"
+    doAssert elems.len == sent.len
+    for i, v in sent:
+      doAssert elems[i].kind == rvPrimitive and elems[i].primitiveVal.kind == ptDouble
+      doAssert elems[i].primitiveVal.doubleVal == v,
+        "EchoDoubleArray[" & $i & "]: expected " & $v
+
+  block sumIntArray:
+    let msg = await client.callComplex("SumIntArray",
+      @[int32ArrayValue(@[1'i32, 2, 3, 4, 5])])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvPrimitive and r.primitiveVal.kind == ptInt32,
+      "SumIntArray: expected int32 return"
+    echo "SumIntArray -> ", r.primitiveVal.int32Val
+    doAssert r.primitiveVal.int32Val == 15
+
+  block echoStringArray:
+    let sent = @[some("alpha"), none(string), some("gamma")]
+    let msg = await client.callComplex("EchoStringArray", @[stringArrayValue(sent)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoStringArray: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoStringArray -> ", elems.len, " elements"
+    doAssert elems.len == sent.len
+    for i, v in sent:
+      if v.isSome:
+        doAssert elems[i].kind == rvString, "EchoStringArray[" & $i & "]: expected string"
+        doAssert elems[i].stringVal.value == v.get
+      else:
+        doAssert elems[i].kind == rvNull, "EchoStringArray[" & $i & "]: expected null"
+
+  block joinStrings:
+    let msg = await client.callComplex("JoinStrings",
+      @[stringArrayValue(@[some("a"), some("b"), some("c")]), stringRV("-")])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvString, "JoinStrings: expected string, got " & $r.kind
+    echo "JoinStrings -> ", r.stringVal.value
+    doAssert r.stringVal.value == "a-b-c"
+
+  block makeRange:
+    let msg = await client.callComplex("MakeRange", @[int32RV(5), int32RV(4)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "MakeRange: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "MakeRange -> ", elems.len, " elements"
+    doAssert elems.len == 4
+    for i in 0..<4:
+      doAssert elems[i].primitiveVal.int32Val == int32(5 + i),
+        "MakeRange[" & $i & "]: expected " & $(5 + i)
+
+  block echoPerson:
+    let msg = await client.callComplex("EchoPerson",
+      @[personValue("Ada", 36, 99.5)], @[personLibrary()])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvClass, "EchoPerson: expected class, got " & $r.kind
+    let (name, age, score) = personFields(msg, r)
+    echo "EchoPerson -> ", name, "/", age, "/", score
+    doAssert name == "Ada" and age == 36 and score == 99.5
+
+  block describePerson:
+    let msg = await client.callComplex("DescribePerson",
+      @[personValue("Bob", 25, 1.0)], @[personLibrary()])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvString, "DescribePerson: expected string, got " & $r.kind
+    echo "DescribePerson -> ", r.stringVal.value
+    doAssert r.stringVal.value == "Bob:25"
+
+  block makePerson:
+    let msg = await client.callComplex("MakePerson", @[stringRV("Carol"), int32RV(30)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvClass, "MakePerson: expected class, got " & $r.kind
+    let (name, age, score) = personFields(msg, r)
+    echo "MakePerson -> ", name, "/", age, "/", score
+    doAssert name == "Carol" and age == 30 and score == 15.0
+
+  block echoPersonArray:
+    let msg = await client.callComplex("EchoPersonArray",
+      @[personArrayValue(@[personValue("Dan", 1, 0.5), personValue("Eve", 2, 1.5)])],
+      @[personLibrary()])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoPersonArray: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoPersonArray -> ", elems.len, " elements"
+    doAssert elems.len == 2
+    let (name0, age0, score0) = personFields(msg, elems[0])
+    doAssert name0 == "Dan" and age0 == 1'i32 and score0 == 0.5
+    let (name1, age1, score1) = personFields(msg, elems[1])
+    doAssert name1 == "Eve" and age1 == 2'i32 and score1 == 1.5
 
   await client.close()
   echo "All Nim client calls passed."

@@ -26,6 +26,28 @@ namespace Server
         public uint EchoUInt32(uint value) => value;
         public ulong EchoUInt64(ulong value) => value;
         public void Ping() { }
+
+        public int[] EchoIntArray(int[] values) => values;
+        public double[] EchoDoubleArray(double[] values) => values;
+        public int SumIntArray(int[] values)
+        {
+            int sum = 0;
+            foreach (int v in values) sum += v;
+            return sum;
+        }
+        public string[] EchoStringArray(string[] values) => values;
+        public string JoinStrings(string[] values, string separator) => string.Join(separator, values);
+        public int[] MakeRange(int start, int count)
+        {
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++) result[i] = start + i;
+            return result;
+        }
+
+        public Person EchoPerson(Person person) => person;
+        public string DescribePerson(Person person) => person.Name + ":" + person.Age;
+        public Person MakePerson(string name, int age) => new Person { Name = name, Age = age, Score = age * 0.5 };
+        public Person[] EchoPersonArray(Person[] people) => people;
     }
 
     class Program

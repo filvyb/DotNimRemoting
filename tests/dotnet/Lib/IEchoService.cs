@@ -1,5 +1,15 @@
 namespace DotNimTester.Lib
 {
+    [System.Serializable]
+    public class Person
+    {
+        // Plain public fields so MS-NRBF member names stay simple
+        // (auto-properties would serialize as <Name>k__BackingField)
+        public string Name;
+        public int Age;
+        public double Score;
+    }
+
     public interface IEchoService
     {
         // string round-trip
@@ -36,5 +46,26 @@ namespace DotNimTester.Lib
         ulong EchoUInt64(ulong value);
         // void return
         void Ping();
+
+        // primitive array round-trips (ArraySinglePrimitive on the wire)
+        int[] EchoIntArray(int[] values);
+        double[] EchoDoubleArray(double[] values);
+        // array arg -> primitive return
+        int SumIntArray(int[] values);
+        // string array round-trip, null elements included (ArraySingleString)
+        string[] EchoStringArray(string[] values);
+        // mixed args: array + string -> string
+        string JoinStrings(string[] values, string separator);
+        // primitive args -> array return
+        int[] MakeRange(int start, int count);
+
+        // class round-trip (ClassWithMembersAndTypes)
+        Person EchoPerson(Person person);
+        // class arg -> string return
+        string DescribePerson(Person person);
+        // primitive args -> class return
+        Person MakePerson(string name, int age);
+        // array of classes round-trip (BinaryArray of class type)
+        Person[] EchoPersonArray(Person[] people);
     }
 }

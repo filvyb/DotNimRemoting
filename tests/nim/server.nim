@@ -2,7 +2,8 @@ import faststreams/inputs
 import ../../src/DotNimRemoting/tcp/[server, common]
 import ../../src/DotNimRemoting/msnrbf/[grammar, helpers, types]
 import ../../src/DotNimRemoting/msnrbf/records/[member, methodinv]
-import asyncdispatch
+import asyncdispatch, strutils, options
+import interop
 
 # Direction 2: .NET (Mono) client -> Nim server.
 # Implements the same IEchoService contract the .NET client expects, dispatching
@@ -52,6 +53,51 @@ proc serviceHandler(requestUri, methodName, typeName: string,
     return createMethodReturnResponse(int16Value(-args[0].int16Val))
   of "Ping":
     return createMethodReturnResponse()
+  of "EchoIntArray", "EchoDoubleArray", "EchoStringArray":
+    # Echo the parsed array value back; object ids are reassigned on write
+    return createComplexReturnResponse(callArgs(msg)[0])
+  of "SumIntArray":
+    var sum = 0'i32
+    for elem in resolvedElements(msg, callArgs(msg)[0]):
+      sum += elem.primitiveVal.int32Val
+    return createMethodReturnResponse(int32Value(sum))
+  of "JoinStrings":
+    let cargs = callArgs(msg)
+    var parts: seq[string]
+    for elem in resolvedElements(msg, cargs[0]):
+      parts.add(elem.stringVal.value)
+    return createMethodReturnResponse(
+      stringValue(parts.join(cargs[1].stringVal.value)))
+  of "MakeRange":
+    let cargs = callArgs(msg)
+    let start = cargs[0].primitiveVal.int32Val
+    let count = cargs[1].primitiveVal.int32Val
+    var values: seq[int32]
+    for i in 0..<count:
+      values.add(start + i)
+    return createComplexReturnResponse(int32ArrayValue(values))
+  of "EchoPerson":
+    # Rebuild the Person from the parsed fields rather than echoing the parsed
+    # record, so the response carries our own class metadata and library
+    let (pname, age, score) = personFields(msg, callArgs(msg)[0])
+    return createComplexReturnResponse(personValue(pname, age, score),
+                                       @[personLibrary()])
+  of "DescribePerson":
+    let (pname, age, _) = personFields(msg, callArgs(msg)[0])
+    return createMethodReturnResponse(stringValue(pname & ":" & $age))
+  of "MakePerson":
+    let cargs = callArgs(msg)
+    let pname = cargs[0].stringVal.value
+    let age = cargs[1].primitiveVal.int32Val
+    return createComplexReturnResponse(personValue(pname, age, age.float64 * 0.5),
+                                       @[personLibrary()])
+  of "EchoPersonArray":
+    var people: seq[RemotingValue]
+    for elem in resolvedElements(msg, callArgs(msg)[0]):
+      let (pname, age, score) = personFields(msg, elem)
+      people.add(personValue(pname, age, score))
+    return createComplexReturnResponse(personArrayValue(people),
+                                       @[personLibrary()])
   else:
     # Unknown method: reply void so the client sees a well-formed response.
     return createMethodReturnResponse()
