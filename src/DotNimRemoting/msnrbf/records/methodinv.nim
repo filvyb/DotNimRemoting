@@ -6,7 +6,7 @@ import member
 import class
 import arrays
 import serialization
-import strutils, sequtils
+import strutils
 
 type
   ValueWithCode* = object
@@ -451,10 +451,12 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
     # Read the BinaryArray record metadata
     let arrayRecord = readBinaryArray(inp)
     
-    # Compute total number of elements as product of lengths
-    let totalElements = arrayRecord.lengths.foldl(a * b, 1'i32)
-    if totalElements < 0:
-      raise newException(IOError, "Total elements cannot be negative")
+    var product: int64 = 1
+    for length in arrayRecord.lengths:
+      product *= length.int64
+      if product > int32.high.int64:
+        raise newException(IOError, "Array element count exceeds maximum")
+    let totalElements = product.int32
     
     var elements: seq[RemotingValue] = @[]
     
@@ -803,9 +805,15 @@ proc writeRemotingValue(outp: OutputStream, value: RemotingValue,
       of rtBinaryArray:
         var recordToWrite = arrayRecordVariant.binaryArray
         recordToWrite.objectId = id # Assign the new ID
-        # Ensure lengths product matches element count (caller responsibility to construct correctly)
-        let totalElements = recordToWrite.lengths.foldl(a * b, 1'i32)
-        if totalElements != elements.len.int32:
+        # Ensure lengths product matches element count
+        var product: int64 = 1
+        for length in recordToWrite.lengths:
+          if length < 0:
+            raise newException(ValueError, "Array dimension length cannot be negative")
+          product *= length.int64
+          if product > int32.high.int64:
+            raise newException(ValueError, "BinaryArray lengths product exceeds maximum")
+        if product != elements.len.int64:
            raise newException(ValueError, "BinaryArray lengths product mismatch with element count")
         writeBinaryArray(outp, recordToWrite)
 

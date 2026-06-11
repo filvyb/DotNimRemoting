@@ -390,10 +390,10 @@ proc objectToClass*[T: object](obj: T, className: string = "", libraryId: int32 
       memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: boolValue(fieldValue)))
     elif fieldValue is DateTime:
       memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptDateTime)))
-      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: dateTimeValue(fieldValue)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: dateTimeValue(fieldValue.ticks, fieldValue.kind)))
     elif fieldValue is char:
       memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptChar)))
-      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: charValue(fieldValue)))
+      memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: charValue($fieldValue)))
     elif fieldValue is int8:
       memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptSByte)))
       memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: sbyteValue(fieldValue)))
@@ -413,9 +413,8 @@ proc objectToClass*[T: object](obj: T, className: string = "", libraryId: int32 
       memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptUInt64)))
       memberValues.add(RemotingValue(kind: rvPrimitive, primitiveVal: uint64Value(fieldValue)))
     else:
-      # For unsupported types, use null
-      memberInfos.add((fieldName, btPrimitive, AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptNull)))
-      memberValues.add(RemotingValue(kind: rvNull))
+      {.error: "objectToClass: unsupported field type " & $typeof(fieldValue) &
+               " for field '" & fieldName & "' in " & $T.}
   
   # Create the ClassWithMembersAndTypes record
   let classRecord = classWithMembersAndTypes(actualClassName, libraryId, memberInfos)

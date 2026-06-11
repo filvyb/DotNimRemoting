@@ -156,7 +156,7 @@ proc peekRecord*(inp: InputStream): RecordType =
   if not inp.readable:
     raise newException(IOError, "End of stream while reading record type")
   let value = inp.peek
-  if value > byte(high(RecordType)):
+  if value > byte(high(RecordType)) or value in {byte(rtFilling18)..byte(rtFilling20)}:
     raise newException(IOError, "Invalid record type value: " & $value)
   result = RecordType(value)
 
@@ -166,7 +166,7 @@ proc readRecord*(inp: InputStream): RecordType =
   if not inp.readable:
     raise newException(IOError, "End of stream while reading record type")
   let value = inp.read()
-  if value > byte(high(RecordType)):
+  if value > byte(high(RecordType)) or value in {byte(rtFilling18)..byte(rtFilling20)}:
     raise newException(IOError, "Invalid record type value: " & $value)
   result = RecordType(value)
 

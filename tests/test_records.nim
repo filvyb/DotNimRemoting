@@ -694,10 +694,54 @@ suite "Array Records Tests":
       typeEnum: btString,
       additionalTypeInfo: AdditionalTypeInfo(kind: btString)
     )
-    
+
     var outStream = memoryOutput()
     expect ValueError:
       writeBinaryArray(outStream, arr)
+
+  test "Reading BinaryArray with zero rank is accepted":
+    var outStream = memoryOutput()
+    writeRecord(outStream, rtBinaryArray)
+    outStream.write(cast[array[4, byte]](1'i32))   # objectId
+    writeBinaryArrayType(outStream, batSingle)
+    outStream.write(cast[array[4, byte]](0'i32))   # rank = 0
+    outStream.write(byte(btPrimitive))
+    outStream.write(byte(ptInt32))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let decoded = readBinaryArray(inStream)
+    check decoded.rank == 0
+    check decoded.lengths.len == 0
+
+  test "Reading BinaryArray with negative rank is rejected":
+    var outStream = memoryOutput()
+    writeRecord(outStream, rtBinaryArray)
+    outStream.write(cast[array[4, byte]](1'i32))    # objectId
+    writeBinaryArrayType(outStream, batSingle)
+    outStream.write(cast[array[4, byte]](-1'i32))   # rank = -1
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    expect IOError:
+      discard readBinaryArray(inStream)
+
+  test "Reading BinaryArray with overflowing dimension product is rejected":
+    # 65536 * 65536 = 2^32 overflows int32; must raise IOError, not OverflowDefect
+    var outStream = memoryOutput()
+    writeRecord(outStream, rtBinaryArray)
+    outStream.write(cast[array[4, byte]](1'i32))       # objectId
+    writeBinaryArrayType(outStream, batRectangular)
+    outStream.write(cast[array[4, byte]](2'i32))       # rank
+    outStream.write(cast[array[4, byte]](65536'i32))   # dimension 0
+    outStream.write(cast[array[4, byte]](65536'i32))   # dimension 1
+    outStream.write(byte(btPrimitive))
+    outStream.write(byte(ptInt32))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    expect IOError:
+      discard readRemotingValue(inStream, newReferenceContext())
 
 suite "Member Reference Records Tests":
   test "MemberPrimitiveTyped serialization/deserialization":

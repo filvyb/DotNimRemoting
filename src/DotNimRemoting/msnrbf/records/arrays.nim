@@ -71,7 +71,7 @@ proc readBinaryArray*(inp: InputStream): BinaryArray =
   # Read rank
   result.rank = readValueWithContext[int32](inp, "reading array rank")
   if result.rank < 0:
-    raise newException(IOError, "Array rank must be positive")
+    raise newException(IOError, "Array rank cannot be negative")
 
   # Read lengths array
   for i in 0..<result.rank:
@@ -165,8 +165,8 @@ proc writeBinaryArray*(outp: OutputStream, arr: BinaryArray) =
   if arr.objectId <= 0:
     raise newException(ValueError, "Array object ID must be positive")
 
-  if arr.rank <= 0:
-    raise newException(ValueError, "Array rank must be positive")
+  if arr.rank < 0:
+    raise newException(ValueError, "Array rank cannot be negative")
 
   if arr.lengths.len != arr.rank:
     raise newException(ValueError, "Number of lengths must match rank")
@@ -186,8 +186,6 @@ proc writeBinaryArray*(outp: OutputStream, arr: BinaryArray) =
   writeBinaryArrayType(outp, arr.binaryArrayType)
 
   # Write rank
-  if arr.rank < 0:
-    raise newException(ValueError, "Array rank cannot be negative")
   outp.write(cast[array[4, byte]](arr.rank))
 
   # Write lengths
