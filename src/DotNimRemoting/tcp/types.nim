@@ -321,18 +321,11 @@ proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tu
   result.bytesRead = bytesRead
 
 
-proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
-  ## Reads a MessageFrame from the async socket, including its content, returning the value and bytes read.
-  ## Follows MS-NRTP section 2.2.3.3 for message frame structure.
+proc readMessageFrameRest(socket: AsyncSocket, timeout: int): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
+  ## Reads the remainder of a MessageFrame after the 4-byte protocol
+  ## identifier has already been consumed and validated.
   var bytesRead = 0
-  var frame = MessageFrame()
-  
-  # Read protocol ID (4 bytes)
-  let protocolData = await recvExact(socket, 4, timeout, "reading protocol identifier")
-  frame.protocolId = cast[ptr int32](unsafeAddr protocolData[0])[]
-  if frame.protocolId != ProtocolId:
-    raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
-  bytesRead += 4
+  var frame = MessageFrame(protocolId: ProtocolId)
 
   # Read major and minor version (1 byte each)
   let versionData = await recvExact(socket, 2, timeout, "reading version")
@@ -374,6 +367,35 @@ proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[t
   
   result.value = frame
   result.bytesRead = bytesRead
+
+proc checkProtocolId(protocolData: string) =
+  if cast[ptr int32](unsafeAddr protocolData[0])[] != ProtocolId:
+    raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
+
+proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
+  ## Reads a MessageFrame from the async socket, including its content, returning the value and bytes read.
+  ## Follows MS-NRTP section 2.2.3.3 for message frame structure.
+  let protocolData = await recvExact(socket, 4, timeout, "reading protocol identifier")
+  checkProtocolId(protocolData)
+  let rest = await readMessageFrameRest(socket, timeout)
+  result.value = rest.value
+  result.bytesRead = 4 + rest.bytesRead
+
+proc tryReadMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int, eof: bool]] {.async.} =
+  ## Like readMessageFrameAsync, but waits without a timeout for the start of
+  ## the next frame and sets eof instead of raising when the peer closes the
+  ## connection at a frame boundary. Lets servers keep a connection alive
+  ## between requests; the timeout still applies once a frame has started.
+  var protocolData = await socket.recv(4)
+  if protocolData.len == 0:
+    result.eof = true
+    return
+  if protocolData.len < 4:
+    protocolData.add(await recvExact(socket, 4 - protocolData.len, timeout, "reading protocol identifier"))
+  checkProtocolId(protocolData)
+  let rest = await readMessageFrameRest(socket, timeout)
+  result.value = rest.value
+  result.bytesRead = 4 + rest.bytesRead
 
 # Writing functions
 proc writeCountedString*(outp: OutputStream, cs: CountedString) =

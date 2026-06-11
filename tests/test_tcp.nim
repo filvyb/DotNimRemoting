@@ -1,7 +1,7 @@
 import unittest
 import asyncnet, asyncdispatch, options
 import faststreams/outputs
-import DotNimRemoting/tcp/[server, types, helpers, common]
+import DotNimRemoting/tcp/[client, server, types, helpers, common]
 import DotNimRemoting/msnrbf/helpers as msnrbf_helpers
 import DotNimRemoting/msnrbf/[enums, context, grammar]
 import DotNimRemoting/msnrbf/types as msnrbf_types
@@ -22,7 +22,8 @@ proc runExchange(port: int): Future[tuple[reply: MessageFrame, trailing: string]
     operationType = otRequest,
     requestUri = "tcp://127.0.0.1:" & $port & "/test",
     contentType = BinaryFormatId,
-    messageContent = request
+    messageContent = request,
+    closeConnection = true
   )
   var output = memoryOutput()
   writeMessageFrame(output, frame)
@@ -30,9 +31,9 @@ proc runExchange(port: int): Future[tuple[reply: MessageFrame, trailing: string]
 
   let replyResult = await readMessageFrameAsync(socket)
 
-  # The server closes the connection after replying, so drain until EOF.
-  # Any data here means the reply frame was followed by stray bytes
-  # (e.g. message content written twice).
+  # The request carries CloseConnection, so the server closes after
+  # replying; drain until EOF. Any data here means the reply frame was
+  # followed by stray bytes (e.g. message content written twice).
   var trailing = ""
   while true:
     let recvF = socket.recv(1024)
@@ -62,6 +63,36 @@ suite "NRTP TCP Server Tests":
     let ret = extractReturnValue(reply.messageContent)
     check ret.stringVal.value == "pong"
 
+    waitFor srv.stop()
+
+  test "Server keeps connection alive across multiple calls":
+    const port = 18392
+    let srv = newNrtpTcpServer(port)
+    srv.registerHandler("/test", echoHandler)
+    asyncCheck srv.start()
+
+    let cl = newNrtpTcpClient("tcp://127.0.0.1:" & $port & "/test")
+    for i in 1..3:
+      let ret = waitFor cl.callMethod("Ping", "MyServer")
+      check ret.stringVal.value == "pong"
+    waitFor cl.close()
+    waitFor srv.stop()
+
+  test "Client reconnects after close":
+    const port = 18393
+    let srv = newNrtpTcpServer(port)
+    srv.registerHandler("/test", echoHandler)
+    asyncCheck srv.start()
+
+    let cl = newNrtpTcpClient("tcp://127.0.0.1:" & $port & "/test")
+    let first = waitFor cl.callMethod("Ping", "MyServer")
+    check first.stringVal.value == "pong"
+    waitFor cl.close()
+
+    # A closed client must get a fresh socket on the next call
+    let second = waitFor cl.callMethod("Ping", "MyServer")
+    check second.stringVal.value == "pong"
+    waitFor cl.close()
     waitFor srv.stop()
 
 suite "Method call argument extraction":

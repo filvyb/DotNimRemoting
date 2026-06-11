@@ -45,7 +45,10 @@ proc connect*(client: NrtpTcpClient): Future[void] {.async.} =
   
   if client.connected:
     return
-  
+
+  if client.socket.isNil:
+    client.socket = newAsyncSocket()
+
   try:
     await client.socket.connect(client.serverUri.hostname, Port(client.serverUri.port.parseInt()))
     client.connected = true
@@ -57,6 +60,7 @@ proc close*(client: NrtpTcpClient): Future[void] {.async.} =
   ## Closes the connection to the remote server
   if client.connected:
     client.socket.close()
+    client.socket = nil
     client.connected = false
 
 proc sendRequest*(client: NrtpTcpClient, 
@@ -128,7 +132,14 @@ proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
   if frame.operationType != otReply:
     debugLog "[CLIENT] Error: Expected Reply operation type, got ", frame.operationType
     raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
-  
+
+  # A CloseConnection header means the server will not serve further requests on this connection
+  for header in frame.headers:
+    if header.token == htCloseConnection:
+      debugLog "[CLIENT] Server requested connection close"
+      await client.close()
+      break
+
   debugLog "[CLIENT] Content length: ", frame.messageContent.len, " bytes"
   debugLog "[CLIENT] Response fully received"
   return frame.messageContent
