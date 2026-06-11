@@ -88,6 +88,11 @@ namespace Client
             service.Ping();
             Console.WriteLine("Ping -> ok (PASS)");
 
+            // Special double bit patterns
+            Check("EchoDouble(NaN)", double.IsNaN(service.EchoDouble(double.NaN)), true);
+            Check("EchoDouble(+Inf)", service.EchoDouble(double.PositiveInfinity), double.PositiveInfinity);
+            Check("EchoDouble(-Inf)", service.EchoDouble(double.NegativeInfinity), double.NegativeInfinity);
+
             // Arrays
             CheckSeq("EchoIntArray", service.EchoIntArray(new int[] { 1, 2, 3, -4 }), new int[] { 1, 2, 3, -4 });
             CheckSeq("EchoIntArray(empty)", service.EchoIntArray(new int[0]), new int[0]);
@@ -96,6 +101,24 @@ namespace Client
             CheckSeq("EchoStringArray", service.EchoStringArray(new string[] { "alpha", null, "gamma" }), new string[] { "alpha", null, "gamma" });
             Check("JoinStrings", service.JoinStrings(new string[] { "a", "b", "c" }, "-"), "a-b-c");
             CheckSeq("MakeRange", service.MakeRange(5, 4), new int[] { 5, 6, 7, 8 });
+            CheckSeq("EchoByteArray", service.EchoByteArray(new byte[] { 0, 1, 127, 128, 255 }), new byte[] { 0, 1, 127, 128, 255 });
+
+            // Consecutive nulls travel as ObjectNullMultiple256 records
+            string[] nullRun = new string[] { "x", null, null, null, "y", null, null };
+            CheckSeq("EchoStringArray(null run)", service.EchoStringArray(nullRun), nullRun);
+
+            // 300 nulls force the 32-bit ObjectNullMultiple record
+            string[] nulls = service.MakeNulls(300);
+            bool nullsOk = nulls != null && nulls.Length == 300;
+            if (nullsOk)
+            {
+                foreach (string s in nulls)
+                {
+                    if (s != null) { nullsOk = false; break; }
+                }
+            }
+            Console.WriteLine("MakeNulls(300) -> " + (nulls == null ? "null" : nulls.Length + " elements") + (nullsOk ? " (PASS)" : " (FAIL)"));
+            if (!nullsOk) failures++;
 
             // Classes
             Person echoed = service.EchoPerson(new Person { Name = "Ada", Age = 36, Score = 99.5 });
@@ -114,6 +137,51 @@ namespace Client
                 Console.WriteLine("EchoPersonArray -> wrong length (FAIL)");
                 failures++;
             }
+
+            // Same instance twice: serialized as one record plus a MemberReference
+            Person shared = new Person { Name = "Finn", Age = 3, Score = 2.5 };
+            Person[] sharedEcho = service.EchoPersonArray(new Person[] { shared, shared });
+            bool sharedOk = sharedEcho != null && sharedEcho.Length == 2;
+            if (sharedOk) CheckPerson("EchoPersonArray(shared)[0]", sharedEcho[0], "Finn", 3, 2.5);
+            if (sharedOk) CheckPerson("EchoPersonArray(shared)[1]", sharedEcho[1], "Finn", 3, 2.5);
+            if (!sharedOk)
+            {
+                Console.WriteLine("EchoPersonArray(shared) -> wrong length (FAIL)");
+                failures++;
+            }
+
+            // The Nim server returns the same value twice, so the wire format
+            // must dedupe and .NET must materialize a single shared object
+            Person[] twins = service.MakeTwins("Gemini", 9);
+            bool twinsOk = twins != null && twins.Length == 2;
+            if (twinsOk) CheckPerson("MakeTwins[0]", twins[0], "Gemini", 9, 18.0);
+            if (twinsOk) Check("MakeTwins identity", ReferenceEquals(twins[0], twins[1]), true);
+            if (!twinsOk)
+            {
+                Console.WriteLine("MakeTwins -> wrong length (FAIL)");
+                failures++;
+            }
+
+            // Null object round-trip
+            Check("EchoPerson(null)", service.EchoPerson(null), null);
+
+            // Nested classes
+            Employee emp = service.EchoEmployee(new Employee
+            {
+                Name = "Frank",
+                Home = new Address { Street = "Main 5", City = "Brno" }
+            });
+            bool empOk = emp != null && emp.Name == "Frank" && emp.Home != null
+                && emp.Home.Street == "Main 5" && emp.Home.City == "Brno";
+            string empShown = emp == null ? "null"
+                : emp.Name + "/" + (emp.Home == null ? "null" : emp.Home.Street + "/" + emp.Home.City);
+            Console.WriteLine("EchoEmployee -> " + empShown + (empOk ? " (PASS)" : " (FAIL)"));
+            if (!empOk) failures++;
+            Check("DescribeEmployee", service.DescribeEmployee(new Employee
+            {
+                Name = "Grace",
+                Home = new Address { Street = "Side 9", City = "Praha" }
+            }), "Grace@Praha");
 
             if (failures > 0)
             {

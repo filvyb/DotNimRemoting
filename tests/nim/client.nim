@@ -1,7 +1,7 @@
 import ../../src/DotNimRemoting/tcp/[client]
 import ../../src/DotNimRemoting/msnrbf/[grammar, helpers, enums, types]
 import ../../src/DotNimRemoting/msnrbf/records/[methodinv, serialization]
-import asyncdispatch, strutils, options
+import asyncdispatch, strutils, options, math
 import interop
 
 # Direction 1: Nim client -> .NET (Mono) server.
@@ -197,6 +197,24 @@ proc main() {.async.} =
     echo "Ping -> ", r.kind
     doAssert r.kind == ptNull, "Ping: expected null (void), got " & $r.kind
 
+  block echoDoubleNaN:
+    let r = await client.callMethod("EchoDouble", typename, @[doubleValue(NaN)])
+    echo "EchoDouble(NaN) -> ", r.doubleVal
+    doAssert r.kind == ptDouble, "EchoDouble(NaN): expected double, got " & $r.kind
+    doAssert r.doubleVal.isNaN, "EchoDouble(NaN): expected NaN, got " & $r.doubleVal
+
+  block echoDoubleInf:
+    let r = await client.callMethod("EchoDouble", typename, @[doubleValue(Inf)])
+    echo "EchoDouble(+Inf) -> ", r.doubleVal
+    doAssert r.kind == ptDouble, "EchoDouble(+Inf): expected double, got " & $r.kind
+    doAssert r.doubleVal == Inf
+
+  block echoDoubleNegInf:
+    let r = await client.callMethod("EchoDouble", typename, @[doubleValue(-Inf)])
+    echo "EchoDouble(-Inf) -> ", r.doubleVal
+    doAssert r.kind == ptDouble, "EchoDouble(-Inf): expected double, got " & $r.kind
+    doAssert r.doubleVal == -Inf
+
   block echoIntArray:
     let sent = @[1'i32, 2, 3, -4]
     let msg = await client.callComplex("EchoIntArray", @[int32ArrayValue(sent)])
@@ -230,6 +248,19 @@ proc main() {.async.} =
       doAssert elems[i].primitiveVal.doubleVal == v,
         "EchoDoubleArray[" & $i & "]: expected " & $v
 
+  block echoByteArray:
+    let sent = @[0'u8, 1, 127, 128, 255]
+    let msg = await client.callComplex("EchoByteArray", @[byteArrayValue(sent)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoByteArray: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoByteArray -> ", elems.len, " elements"
+    doAssert elems.len == sent.len
+    for i, v in sent:
+      doAssert elems[i].kind == rvPrimitive and elems[i].primitiveVal.kind == ptByte
+      doAssert elems[i].primitiveVal.byteVal == v,
+        "EchoByteArray[" & $i & "]: expected " & $v & ", got " & $elems[i].primitiveVal.byteVal
+
   block sumIntArray:
     let msg = await client.callComplex("SumIntArray",
       @[int32ArrayValue(@[1'i32, 2, 3, 4, 5])])
@@ -253,6 +284,34 @@ proc main() {.async.} =
         doAssert elems[i].stringVal.value == v.get
       else:
         doAssert elems[i].kind == rvNull, "EchoStringArray[" & $i & "]: expected null"
+
+  block echoStringArrayNullRun:
+    # Consecutive nulls travel as ObjectNullMultiple256 records
+    let sent = @[some("x"), none(string), none(string), none(string),
+                 some("y"), none(string), none(string)]
+    let msg = await client.callComplex("EchoStringArray", @[stringArrayValue(sent)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "EchoStringArray(null run): expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "EchoStringArray(null run) -> ", elems.len, " elements"
+    doAssert elems.len == sent.len
+    for i, v in sent:
+      if v.isSome:
+        doAssert elems[i].kind == rvString and elems[i].stringVal.value == v.get,
+          "EchoStringArray(null run)[" & $i & "]: expected " & v.get
+      else:
+        doAssert elems[i].kind == rvNull, "EchoStringArray(null run)[" & $i & "]: expected null"
+
+  block makeNulls:
+    # 300 nulls force the 32-bit ObjectNullMultiple record
+    let msg = await client.callComplex("MakeNulls", @[int32RV(300)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "MakeNulls: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "MakeNulls(300) -> ", elems.len, " elements"
+    doAssert elems.len == 300
+    for i, elem in elems:
+      doAssert elem.kind == rvNull, "MakeNulls[" & $i & "]: expected null, got " & $elem.kind
 
   block joinStrings:
     let msg = await client.callComplex("JoinStrings",
@@ -311,6 +370,61 @@ proc main() {.async.} =
     doAssert name0 == "Dan" and age0 == 1'i32 and score0 == 0.5
     let (name1, age1, score1) = personFields(msg, elems[1])
     doAssert name1 == "Eve" and age1 == 2'i32 and score1 == 1.5
+
+  block makeTwins:
+    # The server returns the same Person instance twice; the second array
+    # element arrives as a MemberReference that must resolve to the first
+    let msg = await client.callComplex("MakeTwins", @[stringRV("Gemini"), int32RV(9)])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvArray, "MakeTwins: expected array, got " & $r.kind
+    let elems = resolvedElements(msg, r)
+    echo "MakeTwins -> ", elems.len, " elements"
+    doAssert elems.len == 2
+    for i in 0..1:
+      let (name, age, score) = personFields(msg, elems[i])
+      doAssert name == "Gemini" and age == 9'i32 and score == 18.0,
+        "MakeTwins[" & $i & "]: got " & name & "/" & $age & "/" & $score
+
+  block echoPersonNull:
+    let msg = await client.callComplex("EchoPerson", @[RemotingValue(kind: rvNull)])
+    let r = returnValueOf(msg)
+    echo "EchoPerson(null) -> ", r.kind
+    doAssert r.kind == rvNull, "EchoPerson(null): expected null, got " & $r.kind
+
+  block echoEmployee:
+    let msg = await client.callComplex("EchoEmployee",
+      @[employeeValue("Frank", addressValue("Main 5", "Brno"))], @[personLibrary()])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvClass, "EchoEmployee: expected class, got " & $r.kind
+    let (name, street, city) = employeeFields(msg, r)
+    echo "EchoEmployee -> ", name, "/", street, "/", city
+    doAssert name == "Frank" and street == "Main 5" and city == "Brno"
+
+  block describeEmployee:
+    let msg = await client.callComplex("DescribeEmployee",
+      @[employeeValue("Grace", addressValue("Side 9", "Praha"))], @[personLibrary()])
+    let r = returnValueOf(msg)
+    doAssert r.kind == rvString, "DescribeEmployee: expected string, got " & $r.kind
+    echo "DescribeEmployee -> ", r.stringVal.value
+    doAssert r.stringVal.value == "Grace@Praha"
+
+  block throwError:
+    # The server throws; the reply is a method return whose call array carries
+    # the serialized exception object instead of a return value
+    let msg = await client.callComplex("ThrowError", @[stringRV("boom from Nim")])
+    doAssert msg.methodReturn.isSome, "ThrowError: expected a method return"
+    let ret = msg.methodReturn.get
+    doAssert MessageFlag.ExceptionInArray in ret.messageEnum,
+      "ThrowError: expected ExceptionInArray flag, got " & $ret.messageEnum
+    doAssert msg.methodCallArray.len == 1, "ThrowError: expected one exception record"
+    let exc = resolveReference(msg, msg.methodCallArray[0])
+    doAssert exc.kind == rvClass, "ThrowError: expected exception class, got " & $exc.kind
+    echo "ThrowError -> ", classNameOf(exc)
+    doAssert "Exception" in classNameOf(exc),
+      "ThrowError: unexpected exception type " & classNameOf(exc)
+    let msgVal = classMember(msg, exc, "Message")
+    doAssert msgVal.kind == rvString and "boom from Nim" in msgVal.stringVal.value,
+      "ThrowError: exception message mismatch"
 
   await client.close()
   echo "All Nim client calls passed."

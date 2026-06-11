@@ -10,6 +10,21 @@ namespace DotNimTester.Lib
         public double Score;
     }
 
+    [System.Serializable]
+    public class Address
+    {
+        public string Street;
+        public string City;
+    }
+
+    [System.Serializable]
+    public class Employee
+    {
+        // Home exercises a class-typed member (nested object graph)
+        public string Name;
+        public Address Home;
+    }
+
     public interface IEchoService
     {
         // string round-trip
@@ -59,6 +74,13 @@ namespace DotNimTester.Lib
         // primitive args -> array return
         int[] MakeRange(int start, int count);
 
+        // double round-trip, used for NaN and +/-Infinity bit patterns
+        double EchoDouble(double value);
+        // byte array round-trip (ArraySinglePrimitive of Byte)
+        byte[] EchoByteArray(byte[] data);
+        // all-null string array return; counts > 255 force ObjectNullMultiple
+        string[] MakeNulls(int count);
+
         // class round-trip (ClassWithMembersAndTypes)
         Person EchoPerson(Person person);
         // class arg -> string return
@@ -67,5 +89,13 @@ namespace DotNimTester.Lib
         Person MakePerson(string name, int age);
         // array of classes round-trip (BinaryArray of class type)
         Person[] EchoPersonArray(Person[] people);
+        // same Person instance twice -> MemberReference on the wire
+        Person[] MakeTwins(string name, int age);
+        // nested class round-trip (class-typed member)
+        Employee EchoEmployee(Employee employee);
+        // nested class arg -> string return
+        string DescribeEmployee(Employee employee);
+        // always throws; the return message carries the exception
+        void ThrowError(string message);
     }
 }

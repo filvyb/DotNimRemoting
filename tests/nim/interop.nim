@@ -8,6 +8,8 @@ import ../../src/DotNimRemoting/msnrbf/records/[methodinv, class, arrays, serial
 
 const
   PersonClassName* = "DotNimTester.Lib.Person"
+  AddressClassName* = "DotNimTester.Lib.Address"
+  EmployeeClassName* = "DotNimTester.Lib.Employee"
   LibAssemblyName* = "Lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
   PersonLibraryId* = 100'i32
     ## High id so it cannot collide with object ids handed out sequentially
@@ -41,6 +43,17 @@ proc int32ArrayValue*(values: seq[int32]): RemotingValue =
   RemotingValue(kind: rvArray, arrayVal: ArrayValue(
     record: ArrayRecord(kind: rtArraySinglePrimitive,
                         arraySinglePrimitive: arraySinglePrimitive(values.len, ptInt32)),
+    elements: elements
+  ))
+
+proc byteArrayValue*(values: seq[byte]): RemotingValue =
+  ## byte[] as ArraySinglePrimitive
+  var elements: seq[RemotingValue]
+  for v in values:
+    elements.add(RemotingValue(kind: rvPrimitive, primitiveVal: byteValue(v)))
+  RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+    record: ArrayRecord(kind: rtArraySinglePrimitive,
+                        arraySinglePrimitive: arraySinglePrimitive(values.len, ptByte)),
     elements: elements
   ))
 
@@ -82,6 +95,32 @@ proc personValue*(name: string, age: int32, score: float64): RemotingValue =
     members: @[stringRV(name), int32RV(age), doubleRV(score)]
   ))
 
+proc addressValue*(street, city: string): RemotingValue =
+  ## DotNimTester.Lib.Address as ClassWithMembersAndTypes
+  let record = classWithMembersAndTypes(AddressClassName, PersonLibraryId, @[
+    ("Street", btString, AdditionalTypeInfo(kind: btString)),
+    ("City", btString, AdditionalTypeInfo(kind: btString))
+  ])
+  RemotingValue(kind: rvClass, classVal: ClassValue(
+    record: ClassRecord(kind: rtClassWithMembersAndTypes, classWithMembersAndTypes: record),
+    members: @[stringRV(street), stringRV(city)]
+  ))
+
+proc employeeValue*(name: string, address: RemotingValue): RemotingValue =
+  ## DotNimTester.Lib.Employee with a class-typed Home member; the nested
+  ## Address record is written inline in member position
+  let record = classWithMembersAndTypes(EmployeeClassName, PersonLibraryId, @[
+    ("Name", btString, AdditionalTypeInfo(kind: btString)),
+    ("Home", btClass, AdditionalTypeInfo(kind: btClass, classInfo: ClassTypeInfo(
+      typeName: LengthPrefixedString(value: AddressClassName),
+      libraryId: PersonLibraryId
+    )))
+  ])
+  RemotingValue(kind: rvClass, classVal: ClassValue(
+    record: ClassRecord(kind: rtClassWithMembersAndTypes, classWithMembersAndTypes: record),
+    members: @[stringRV(name), address]
+  ))
+
 proc personArrayValue*(people: seq[RemotingValue]): RemotingValue =
   ## Person[] as BinaryArray of class type, so .NET materializes a typed array
   RemotingValue(kind: rvArray, arrayVal: ArrayValue(
@@ -119,6 +158,9 @@ proc callArgs*(msg: RemotingMessage): seq[RemotingValue] =
     for arg in call.args:
       if arg.primitiveType == ptString:
         result.add(RemotingValue(kind: rvString, stringVal: arg.value.stringVal))
+      elif arg.primitiveType == ptNull:
+        # .NET inlines a null object argument as a Null-typed ValueWithCode
+        result.add(RemotingValue(kind: rvNull))
       else:
         result.add(RemotingValue(kind: rvPrimitive, primitiveVal: arg.value))
   elif MessageFlag.ArgsIsArray in call.messageEnum:
@@ -186,6 +228,48 @@ proc personFields*(msg: RemotingMessage, rv: RemotingValue): tuple[name: string,
   doAssert scoreVal.kind == rvPrimitive and scoreVal.primitiveVal.kind == ptDouble,
     "Person.Score: expected double"
   result.score = scoreVal.primitiveVal.doubleVal
+
+proc classNameOf*(rv: RemotingValue): string =
+  ## Class name of a class value, empty for ClassWithId records
+  doAssert rv.kind == rvClass, "expected class value, got " & $rv.kind
+  let rec = rv.classVal.record
+  case rec.kind
+  of rtClassWithMembersAndTypes: rec.classWithMembersAndTypes.classInfo.name.value
+  of rtSystemClassWithMembersAndTypes: rec.systemClassWithMembersAndTypes.classInfo.name.value
+  of rtClassWithMembers: rec.classWithMembers.classInfo.name.value
+  of rtSystemClassWithMembers: rec.systemClassWithMembers.classInfo.name.value
+  else: ""
+
+proc classMember*(msg: RemotingMessage, rv: RemotingValue, name: string,
+                  fallbackNames: seq[string] = @[]): RemotingValue =
+  ## Member of a class value looked up by name, references resolved.
+  ## fallbackNames supplies the member layout for ClassWithId records.
+  doAssert rv.kind == rvClass, "expected class value, got " & $rv.kind
+  var names = memberNamesOf(rv)
+  if names.len == 0:
+    names = fallbackNames
+  let idx = names.indexOf(name)
+  doAssert idx >= 0, "class has no member '" & name & "'"
+  resolveReference(msg, rv.classVal.members[idx])
+
+proc addressFields*(msg: RemotingMessage, rv: RemotingValue): tuple[street, city: string] =
+  let streetVal = classMember(msg, rv, "Street", @["Street", "City"])
+  doAssert streetVal.kind == rvString, "Address.Street: expected string, got " & $streetVal.kind
+  result.street = streetVal.stringVal.value
+  let cityVal = classMember(msg, rv, "City", @["Street", "City"])
+  doAssert cityVal.kind == rvString, "Address.City: expected string, got " & $cityVal.kind
+  result.city = cityVal.stringVal.value
+
+proc employeeFields*(msg: RemotingMessage, rv: RemotingValue): tuple[name, street, city: string] =
+  ## Extracts an Employee value including its nested Address member
+  let nameVal = classMember(msg, rv, "Name", @["Name", "Home"])
+  doAssert nameVal.kind == rvString, "Employee.Name: expected string, got " & $nameVal.kind
+  result.name = nameVal.stringVal.value
+  let homeVal = classMember(msg, rv, "Home", @["Name", "Home"])
+  doAssert homeVal.kind == rvClass, "Employee.Home: expected class, got " & $homeVal.kind
+  let (street, city) = addressFields(msg, homeVal)
+  result.street = street
+  result.city = city
 
 #
 # Message construction

@@ -44,10 +44,22 @@ namespace Server
             return result;
         }
 
+        public double EchoDouble(double value) => value;
+        public byte[] EchoByteArray(byte[] data) => data;
+        public string[] MakeNulls(int count) => new string[count];
+
         public Person EchoPerson(Person person) => person;
         public string DescribePerson(Person person) => person.Name + ":" + person.Age;
         public Person MakePerson(string name, int age) => new Person { Name = name, Age = age, Score = age * 0.5 };
         public Person[] EchoPersonArray(Person[] people) => people;
+        public Person[] MakeTwins(string name, int age)
+        {
+            Person p = new Person { Name = name, Age = age, Score = age * 2.0 };
+            return new Person[] { p, p };
+        }
+        public Employee EchoEmployee(Employee employee) => employee;
+        public string DescribeEmployee(Employee employee) => employee.Name + "@" + employee.Home.City;
+        public void ThrowError(string message) => throw new Exception(message);
     }
 
     class Program

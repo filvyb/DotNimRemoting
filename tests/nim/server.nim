@@ -1,6 +1,6 @@
 import faststreams/inputs
 import ../../src/DotNimRemoting/tcp/[server, common]
-import ../../src/DotNimRemoting/msnrbf/[grammar, helpers, types]
+import ../../src/DotNimRemoting/msnrbf/[grammar, helpers, enums, types]
 import ../../src/DotNimRemoting/msnrbf/records/[member, methodinv]
 import asyncdispatch, strutils, options
 import interop
@@ -39,7 +39,7 @@ proc serviceHandler(requestUri, methodName, typeName: string,
   of "IsPositive":
     return createMethodReturnResponse(boolValue(args[0].int32Val > 0))
   of "EchoDecimal", "EchoDateTime", "EchoTimeSpan", "EchoChar",
-     "EchoUInt16", "EchoUInt32", "EchoUInt64":
+     "EchoUInt16", "EchoUInt32", "EchoUInt64", "EchoDouble":
     # Pure round-trips: send the parsed argument straight back.
     return createMethodReturnResponse(args[0])
   of "MultiplyFloat":
@@ -53,9 +53,15 @@ proc serviceHandler(requestUri, methodName, typeName: string,
     return createMethodReturnResponse(int16Value(-args[0].int16Val))
   of "Ping":
     return createMethodReturnResponse()
-  of "EchoIntArray", "EchoDoubleArray", "EchoStringArray":
+  of "EchoIntArray", "EchoDoubleArray", "EchoStringArray", "EchoByteArray":
     # Echo the parsed array value back; object ids are reassigned on write
     return createComplexReturnResponse(callArgs(msg)[0])
+  of "MakeNulls":
+    let count = callArgs(msg)[0].primitiveVal.int32Val
+    var nulls: seq[Option[string]]
+    for i in 0..<count:
+      nulls.add(none(string))
+    return createComplexReturnResponse(stringArrayValue(nulls))
   of "SumIntArray":
     var sum = 0'i32
     for elem in resolvedElements(msg, callArgs(msg)[0]):
@@ -77,9 +83,13 @@ proc serviceHandler(requestUri, methodName, typeName: string,
       values.add(start + i)
     return createComplexReturnResponse(int32ArrayValue(values))
   of "EchoPerson":
+    let arg = callArgs(msg)[0]
+    if arg.kind == rvNull:
+      # Null object return travels as the NoReturnValue flag
+      return createMethodReturnResponse()
     # Rebuild the Person from the parsed fields rather than echoing the parsed
     # record, so the response carries our own class metadata and library
-    let (pname, age, score) = personFields(msg, callArgs(msg)[0])
+    let (pname, age, score) = personFields(msg, arg)
     return createComplexReturnResponse(personValue(pname, age, score),
                                        @[personLibrary()])
   of "DescribePerson":
@@ -98,6 +108,22 @@ proc serviceHandler(requestUri, methodName, typeName: string,
       people.add(personValue(pname, age, score))
     return createComplexReturnResponse(personArrayValue(people),
                                        @[personLibrary()])
+  of "MakeTwins":
+    # The same value twice: the writer dedupes by pointer, so the second
+    # element goes out as a MemberReference and .NET sees one shared object
+    let cargs = callArgs(msg)
+    let pname = cargs[0].stringVal.value
+    let age = cargs[1].primitiveVal.int32Val
+    let p = personValue(pname, age, age.float64 * 2.0)
+    return createComplexReturnResponse(personArrayValue(@[p, p]),
+                                       @[personLibrary()])
+  of "EchoEmployee":
+    let (ename, street, city) = employeeFields(msg, callArgs(msg)[0])
+    return createComplexReturnResponse(
+      employeeValue(ename, addressValue(street, city)), @[personLibrary()])
+  of "DescribeEmployee":
+    let (ename, _, city) = employeeFields(msg, callArgs(msg)[0])
+    return createMethodReturnResponse(stringValue(ename & "@" & city))
   else:
     # Unknown method: reply void so the client sees a well-formed response.
     return createMethodReturnResponse()
