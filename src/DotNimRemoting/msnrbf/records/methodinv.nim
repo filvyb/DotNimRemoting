@@ -5,6 +5,7 @@ import ../context
 import member
 import class
 import arrays
+import serialization
 import strutils, sequtils
 
 type
@@ -274,18 +275,37 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
   ## The ReferenceContext tracks class metadata across records so ClassWithId
   ## records can resolve their MetadataId.
   proc readClassMembers(inp: InputStream, ctx: ReferenceContext, info: ClassMetadataInfo): seq[RemotingValue] =
-    ## Reads class member values following a class record, according to the
-    ## class metadata (Section 2.7: Classes = ... *(memberReference)).
+    ## Reads class member values following a class record
     ## Members declared btPrimitive are read as MemberPrimitiveUnTyped (Section 2.3.2);
-    ## all other members are full records.
-    for i in 0..<info.memberCount:
+    ## all other members are full records. A single ObjectNullMultiple(256)
+    ## record may cover several consecutive null members (Section 2.5.5).
+    var i: int32 = 0
+    while i < info.memberCount:
       if info.hasTypeInfo and info.memberTypeInfo.binaryTypes[i] == btPrimitive:
         let primValue = readMemberPrimitiveUnTyped(inp, info.memberTypeInfo.additionalInfos[i].primitiveType)
         result.add(RemotingValue(kind: rvPrimitive, primitiveVal: primValue.value))
+        inc i
       else:
-        result.add(readRemotingValue(inp, ctx))
+        let nextType = peekRecord(inp)
+        if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+          var nulls = readOptimizedNulls(inp, nextType)
+          while nulls > 0 and i < info.memberCount:
+            if info.hasTypeInfo and info.memberTypeInfo.binaryTypes[i] == btPrimitive:
+              raise newException(IOError, "Null record spans a primitive class member")
+            result.add(RemotingValue(kind: rvNull))
+            dec nulls
+            inc i
+          if nulls > 0:
+            raise newException(IOError, "Null record count exceeds remaining class members")
+        else:
+          result.add(readRemotingValue(inp, ctx))
+          inc i
 
-  let recordType = peekRecord(inp)
+  # A BinaryLibrary record may precede the record in any member position
+  var recordType = peekRecord(inp)
+  while recordType == rtBinaryLibrary:
+    ctx.addLibrary(readBinaryLibrary(inp))
+    recordType = peekRecord(inp)
   case recordType
   of rtMemberPrimitiveTyped:
     let primTyped = readMemberPrimitiveTyped(inp)
@@ -541,7 +561,7 @@ proc writeRemotingValue(outp: OutputStream, value: RemotingValue,
                         ctx: SerializationContext,
                         deferred: var seq[RemotingValue]) =
     ## Writes a value in memberReference position (class member or array
-    ## element). The grammar (Section 2.7) forbids Arrays records there, so an
+    ## element). The grammar forbids Arrays records there, so an
     ## array is written as a MemberReference and its record deferred to the top
     ## level.
     if value.kind == rvArray:

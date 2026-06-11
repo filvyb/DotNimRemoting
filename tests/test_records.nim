@@ -1702,3 +1702,149 @@ suite "ClassWithId Tests":
     var outStream2 = memoryOutput()
     expect ValueError:
       writeRemotingValue(outStream2, orphan, newSerializationContext())
+
+suite "Member position grammar regressions":
+  test "Class members encoded with ObjectNullMultiple256":
+    # A single multi-null record may cover several consecutive null members
+    # (Section 2.5.5/2.7); reading must consume it once and fill all of them
+    var outStream = memoryOutput()
+    writeSystemClassWithMembersAndTypes(outStream, SystemClassWithMembersAndTypes(
+      recordType: rtSystemClassWithMembersAndTypes,
+      classInfo: ClassInfo(
+        objectId: 1,
+        name: LengthPrefixedString(value: "Test.Cls"),
+        memberCount: 4,
+        memberNames: @[
+          LengthPrefixedString(value: "a"),
+          LengthPrefixedString(value: "b"),
+          LengthPrefixedString(value: "c"),
+          LengthPrefixedString(value: "d")
+        ]
+      ),
+      memberTypeInfo: MemberTypeInfo(
+        binaryTypes: @[btObject, btObject, btObject, btString],
+        additionalInfos: @[
+          AdditionalTypeInfo(kind: btObject),
+          AdditionalTypeInfo(kind: btObject),
+          AdditionalTypeInfo(kind: btObject),
+          AdditionalTypeInfo(kind: btString)
+        ]
+      )
+    ))
+    writeObjectNullMultiple256(outStream, ObjectNullMultiple256(
+      recordType: rtObjectNullMultiple256, nullCount: 3))
+    writeBinaryObjectString(outStream, BinaryObjectString(
+      recordType: rtBinaryObjectString, objectId: 2,
+      value: LengthPrefixedString(value: "tail")))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let value = readRemotingValue(inStream, newReferenceContext())
+    check value.classVal.members.len == 4
+    check value.classVal.members[0].kind == rvNull
+    check value.classVal.members[1].kind == rvNull
+    check value.classVal.members[2].kind == rvNull
+    check value.classVal.members[3].kind == rvString
+    check value.classVal.members[3].stringVal.value == "tail"
+
+  test "Null record count exceeding remaining class members fails":
+    var outStream = memoryOutput()
+    writeSystemClassWithMembersAndTypes(outStream, SystemClassWithMembersAndTypes(
+      recordType: rtSystemClassWithMembersAndTypes,
+      classInfo: ClassInfo(
+        objectId: 1,
+        name: LengthPrefixedString(value: "Test.Cls"),
+        memberCount: 2,
+        memberNames: @[
+          LengthPrefixedString(value: "a"),
+          LengthPrefixedString(value: "b")
+        ]
+      ),
+      memberTypeInfo: MemberTypeInfo(
+        binaryTypes: @[btObject, btObject],
+        additionalInfos: @[
+          AdditionalTypeInfo(kind: btObject),
+          AdditionalTypeInfo(kind: btObject)
+        ]
+      )
+    ))
+    writeObjectNullMultiple256(outStream, ObjectNullMultiple256(
+      recordType: rtObjectNullMultiple256, nullCount: 5))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    expect IOError:
+      discard readRemotingValue(inStream, newReferenceContext())
+
+  test "BinaryLibrary inside call array before class argument":
+    # .NET emits the BinaryLibrary record immediately before the first record
+    # that references it
+    var outStream = memoryOutput()
+    writeSerializationHeader(outStream, SerializationHeaderRecord(
+      recordType: rtSerializedStreamHeader, rootId: 1, headerId: -1,
+      majorVersion: 1, minorVersion: 0))
+    writeBinaryMethodCall(outStream, BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {MessageFlag.NoContext, MessageFlag.ArgsInArray},
+      methodName: newStringValueWithCode("DoIt"),
+      typeName: newStringValueWithCode("Test.Svc")))
+    writeArraySingleObject(outStream, ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(objectId: 1, length: 1)))
+    writeBinaryLibrary(outStream, BinaryLibrary(
+      recordType: rtBinaryLibrary, libraryId: 2,
+      libraryName: LengthPrefixedString(value: "MyLib, Version=1.0.0.0")))
+    writeClassWithMembersAndTypes(outStream, ClassWithMembersAndTypes(
+      recordType: rtClassWithMembersAndTypes,
+      classInfo: ClassInfo(
+        objectId: 3,
+        name: LengthPrefixedString(value: "MyLib.Arg"),
+        memberCount: 1,
+        memberNames: @[LengthPrefixedString(value: "n")]
+      ),
+      memberTypeInfo: MemberTypeInfo(
+        binaryTypes: @[btPrimitive],
+        additionalInfos: @[AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32)]
+      ),
+      libraryId: 2))
+    writeValue[int32](outStream, 42'i32)
+    writeMessageEnd(outStream, MessageEnd(recordType: rtMessageEnd))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let msg = readRemotingMessage(inStream)
+    check msg.methodCallArray.len == 1
+    check msg.methodCallArray[0].kind == rvClass
+    check msg.methodCallArray[0].classVal.members.len == 1
+    check msg.methodCallArray[0].classVal.members[0].primitiveVal.int32Val == 42
+    check msg.libraries.len == 1
+    check msg.libraries[0].libraryId == 2
+
+  test "BinaryLibrary before the call array record":
+    var outStream = memoryOutput()
+    writeSerializationHeader(outStream, SerializationHeaderRecord(
+      recordType: rtSerializedStreamHeader, rootId: 1, headerId: -1,
+      majorVersion: 1, minorVersion: 0))
+    writeBinaryMethodCall(outStream, BinaryMethodCall(
+      recordType: rtMethodCall,
+      messageEnum: {MessageFlag.NoContext, MessageFlag.ArgsInArray},
+      methodName: newStringValueWithCode("DoIt"),
+      typeName: newStringValueWithCode("Test.Svc")))
+    writeBinaryLibrary(outStream, BinaryLibrary(
+      recordType: rtBinaryLibrary, libraryId: 2,
+      libraryName: LengthPrefixedString(value: "MyLib, Version=1.0.0.0")))
+    writeArraySingleObject(outStream, ArraySingleObject(
+      recordType: rtArraySingleObject,
+      arrayInfo: ArrayInfo(objectId: 1, length: 1)))
+    writeBinaryObjectString(outStream, BinaryObjectString(
+      recordType: rtBinaryObjectString, objectId: 3,
+      value: LengthPrefixedString(value: "arg")))
+    writeMessageEnd(outStream, MessageEnd(recordType: rtMessageEnd))
+    let serialized = outStream.getOutput(seq[byte])
+
+    let inStream = memoryInput(serialized)
+    let msg = readRemotingMessage(inStream)
+    check msg.methodCallArray.len == 1
+    check msg.methodCallArray[0].kind == rvString
+    check msg.libraries.len == 1
+    check msg.libraries[0].libraryId == 2

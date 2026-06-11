@@ -108,8 +108,12 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
   if needsCallArray(result.call):
     if not inp.readable:
       raise newException(IOError, "End of stream while reading call array")
-      
-    let arrayRecord = peekRecord(inp)
+
+    # callArray = 0*1(BinaryLibrary) ArraySingleObject ... (Section 2.7)
+    var arrayRecord = peekRecord(inp)
+    while arrayRecord == rtBinaryLibrary:
+      ctx.addLibrary(readBinaryLibrary(inp))
+      arrayRecord = peekRecord(inp)
     if arrayRecord != rtArraySingleObject:
       raise newException(IOError, "Expected ArraySingleObject for call array, got " & $arrayRecord)
 
@@ -154,8 +158,12 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
   if needsCallArray(result.ret):
     if not inp.readable:
       raise newException(IOError, "End of stream while reading return array")
-      
-    let arrayRecord = peekRecord(inp)
+
+    # callArray = 0*1(BinaryLibrary) ArraySingleObject ... (Section 2.7)
+    var arrayRecord = peekRecord(inp)
+    while arrayRecord == rtBinaryLibrary:
+      ctx.addLibrary(readBinaryLibrary(inp))
+      arrayRecord = peekRecord(inp)
     if arrayRecord != rtArraySingleObject:
       raise newException(IOError, "Expected ArraySingleObject for return array, got " & $arrayRecord)
 
@@ -203,11 +211,9 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
       
     # Handle BinaryLibrary records
     if nextType == rtBinaryLibrary:
-      let library = readBinaryLibrary(inp)
-      ctx.addLibrary(library)
-      result.libraries.add(library)
+      ctx.addLibrary(readBinaryLibrary(inp))
       continue
-      
+
     # Unexpected end
     if nextType == rtMessageEnd:
       raise newException(IOError, "Unexpected MessageEnd before method")
@@ -240,16 +246,16 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
     if nextType == rtMessageEnd:
       discard inp.read # Consume the record type
       result.tail = MessageEnd(recordType: rtMessageEnd)
-      
-      # Libraries are already added to result.libraries directly during reading
-      
+
+      # Collect every library seen during reading, including ones nested in
+      # member positions, so re-serialization keeps their definitions
+      result.libraries = ctx.libraryOrder
+
       return
-      
+
     # Handle BinaryLibrary records
     if nextType == rtBinaryLibrary:
-      let library = readBinaryLibrary(inp)
-      ctx.addLibrary(library)
-      result.libraries.add(library)
+      ctx.addLibrary(readBinaryLibrary(inp))
       continue
       
     # Read referenceable record as RemotingValue

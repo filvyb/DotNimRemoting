@@ -48,6 +48,7 @@ type
   ReferenceContext* = ref object
     ## Tracks object references during deserialization
     libraries*: Table[int32, BinaryLibrary]     # Maps library IDs to libraries
+    libraryOrder*: seq[BinaryLibrary]           # Libraries in stream order
     classMetadata*: Table[int32, ClassMetadataInfo] # Maps class record object IDs to their metadata
 
 
@@ -56,6 +57,7 @@ proc addLibrary*(ctx: ReferenceContext, lib: BinaryLibrary) =
   if lib.libraryId in ctx.libraries:
     raise newException(IOError, "Duplicate library ID: " & $lib.libraryId)
   ctx.libraries[lib.libraryId] = lib
+  ctx.libraryOrder.add(lib)
 
 
 proc getLibrary*(ctx: ReferenceContext, id: int32): BinaryLibrary =
