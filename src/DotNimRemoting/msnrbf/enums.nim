@@ -74,7 +74,7 @@ type
 
   MessageFlag* {.pure.} = enum
     ## Section 2.2.1.1 MessageFlags individual bits
-    NoArgs                  # No arguments 
+    NoArgs                 # No arguments 
     ArgsInline             # Arguments Array in Args field of Method record
     ArgsIsArray            # Each argument is item in separate Call Array record
     ArgsInArray            # Arguments Array is item in separate Call Array record
@@ -88,8 +88,8 @@ type
     ReturnValueInline      # Return Value in ReturnValue field
     ReturnValueInArray     # Return Value in Call Array record 
     ExceptionInArray       # Exception in Call Array record
+    Reserved14             # Reserved
     GenericMethod          # Remote Method is generic, actual types in Call Array
-    Reserved15            # Reserved
     Reserved16            # Reserved 
     Reserved17            # Reserved
     Reserved18            # Reserved
@@ -137,9 +137,12 @@ proc validateMessageFlags*(flags: MessageFlags) =
     propertyFlags = {PropertyInArray}
     genericFlags = {GenericMethod}
 
-  # Category exclusivity rules from spec
-  checkMutuallyExclusive(argsFlags, exceptionFlags)
-  checkMutuallyExclusive(returnFlags, exceptionFlags)
+  # Category exclusivity rules from spec, but relaxed
+  # The spec declares the Args and Return categories exclusive with Exception,
+  # but .NET/Mono emit NoArgs|NoContext|NoReturnValue|ExceptionInArray (0x2211) on exception
+  # returns
+  checkMutuallyExclusive(argsFlags - {NoArgs}, exceptionFlags)
+  checkMutuallyExclusive(returnFlags - {NoReturnValue}, exceptionFlags)
   checkMutuallyExclusive(returnFlags, signatureFlags)
   checkMutuallyExclusive(signatureFlags, exceptionFlags)
   

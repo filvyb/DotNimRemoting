@@ -455,6 +455,47 @@ suite "Other Records Tests":
     expect ValueError:
       writeMessageFlags(outStream, invalidFlags)
 
+  test "MessageFlag wire values match MS-NRBF 2.2.1.1":
+    proc wireValue(flag: MessageFlag): uint32 =
+      var outStream = memoryOutput()
+      writeMessageFlags(outStream, {flag})
+      let bytes = outStream.getOutput(seq[byte])
+      uint32(bytes[0]) or (uint32(bytes[1]) shl 8) or
+        (uint32(bytes[2]) shl 16) or (uint32(bytes[3]) shl 24)
+
+    check wireValue(MessageFlag.NoArgs) == 0x00000001'u32
+    check wireValue(MessageFlag.ArgsInline) == 0x00000002'u32
+    check wireValue(MessageFlag.ArgsIsArray) == 0x00000004'u32
+    check wireValue(MessageFlag.ArgsInArray) == 0x00000008'u32
+    check wireValue(MessageFlag.NoContext) == 0x00000010'u32
+    check wireValue(MessageFlag.ContextInline) == 0x00000020'u32
+    check wireValue(MessageFlag.ContextInArray) == 0x00000040'u32
+    check wireValue(MessageFlag.MethodSignatureInArray) == 0x00000080'u32
+    check wireValue(MessageFlag.PropertyInArray) == 0x00000100'u32
+    check wireValue(MessageFlag.NoReturnValue) == 0x00000200'u32
+    check wireValue(MessageFlag.ReturnValueVoid) == 0x00000400'u32
+    check wireValue(MessageFlag.ReturnValueInline) == 0x00000800'u32
+    check wireValue(MessageFlag.ReturnValueInArray) == 0x00001000'u32
+    check wireValue(MessageFlag.ExceptionInArray) == 0x00002000'u32
+    check wireValue(MessageFlag.GenericMethod) == 0x00008000'u32
+
+  test ".NET exception return flags are valid":
+    # MS-NRBF 2.2.1.1 declares Args and Return exclusive with Exception, but
+    # .NET/Mono emit 0x2211 on exception returns anyway, so the absence flags
+    # NoArgs and NoReturnValue must be accepted alongside ExceptionInArray
+    let dotnetExceptionFlags = {
+      MessageFlag.NoArgs,
+      MessageFlag.NoContext,
+      MessageFlag.NoReturnValue,
+      MessageFlag.ExceptionInArray
+    }
+
+    var outStream = memoryOutput()
+    writeMessageFlags(outStream, dotnetExceptionFlags)
+
+    var inStream = memoryInput(outStream.getOutput(seq[byte]))
+    check readMessageFlags(inStream) == dotnetExceptionFlags
+
   test "Return and Exception flags are mutually exclusive":
     let invalidFlags = {
       MessageFlag.ReturnValueInline,
