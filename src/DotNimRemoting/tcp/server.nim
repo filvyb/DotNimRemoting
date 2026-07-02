@@ -59,7 +59,7 @@ proc registerService*(server: NrtpTcpServer, path: string, service: ServiceHandl
     var input = memoryInput(requestData)
     let msg = readRemotingMessage(input)
     if msg.methodCall.isNone:
-      return createMethodReturnResponse()
+      return createMethodReturnResponse(nullValue())
     try:
       let ret = await service(methodNameOf(msg), callArgs(msg))
       return createMethodReturnResponse(ret, libraries)

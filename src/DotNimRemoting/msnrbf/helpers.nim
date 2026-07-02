@@ -105,7 +105,8 @@ converter toValueWithCode*(strVal: StringValueWithCode): ValueWithCode =
 # Method call/return creation helpers
 #
 
-proc methodCallBasic*(methodName, typeName: string, argsInline: seq[PrimitiveValue] = @[]): BinaryMethodCall =
+proc methodCallBasic*(methodName, typeName: string, argsInline: seq[PrimitiveValue] = @[]): BinaryMethodCall
+    {.deprecated: "use the RemotingValue message API (createMethodCallRequest)".} =
   ## Create a simple method call with inline arguments
   var flags: MessageFlags = {MessageFlag.NoContext}
   
@@ -127,7 +128,8 @@ proc methodCallBasic*(methodName, typeName: string, argsInline: seq[PrimitiveVal
       args.add(toValueWithCode(arg))
     result.args = args
 
-proc methodCallArrayArgs*(methodName, typeName: string): (BinaryMethodCall, seq[ValueWithCode]) =
+proc methodCallArrayArgs*(methodName, typeName: string): (BinaryMethodCall, seq[ValueWithCode])
+    {.deprecated: "use the RemotingValue message API (createMethodCallRequest)".} =
   ## Create a method call with arguments in array (returns the call and empty array for populating)
   let flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.ArgsInArray}
   
@@ -141,7 +143,8 @@ proc methodCallArrayArgs*(methodName, typeName: string): (BinaryMethodCall, seq[
   # Return empty array for caller to populate
   result[1] = @[]
 
-proc methodReturnBasic*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): BinaryMethodReturn =
+proc methodReturnBasic*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): BinaryMethodReturn
+    {.deprecated: "use the RemotingValue message API (createMethodReturnResponse)".} =
   ## Create a simple method return with inline return value
   var flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.NoArgs}
   
@@ -158,14 +161,16 @@ proc methodReturnBasic*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNul
   if returnValue.kind != ptNull:
     result.returnValue = toValueWithCode(returnValue)
 
-proc methodReturnVoid*(): BinaryMethodReturn =
+proc methodReturnVoid*(): BinaryMethodReturn
+    {.deprecated: "use the RemotingValue message API (createMethodReturnResponse)".} =
   ## Create a method return with void result (no return value)
   BinaryMethodReturn(
     recordType: rtMethodReturn,
     messageEnum: {MessageFlag.NoContext, MessageFlag.NoArgs, MessageFlag.ReturnValueVoid}
   )
 
-proc methodReturnArrayValue*(): (BinaryMethodReturn, seq[ValueWithCode]) =
+proc methodReturnArrayValue*(): (BinaryMethodReturn, seq[ValueWithCode])
+    {.deprecated: "use the RemotingValue message API (createMethodReturnResponse)".} =
   ## Create a method return with return value in array
   let flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.NoArgs, MessageFlag.ReturnValueInArray}
   
@@ -177,7 +182,8 @@ proc methodReturnArrayValue*(): (BinaryMethodReturn, seq[ValueWithCode]) =
   # Return empty array for caller to populate with the return value
   result[1] = @[]
 
-proc methodReturnException*(exceptionValue: ValueWithCode): (BinaryMethodReturn, seq[ValueWithCode]) =
+proc methodReturnException*(exceptionValue: ValueWithCode): (BinaryMethodReturn, seq[ValueWithCode])
+    {.deprecated: "use createMethodReturnExceptionResponse with dotNetExceptionValue".} =
   ## Create a method return with exception
   let flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.ExceptionInArray}
   
@@ -193,22 +199,31 @@ proc methodReturnException*(exceptionValue: ValueWithCode): (BinaryMethodReturn,
 # Complete message creation helpers 
 #
 
-proc createMethodCallMessage*(methodName, typeName: string, argsInline: seq[PrimitiveValue] = @[]): RemotingMessage =
+proc createMethodCallMessage*(methodName, typeName: string, argsInline: seq[PrimitiveValue] = @[]): RemotingMessage
+    {.deprecated: "use createMethodCallRequest with seq[RemotingValue]".} =
   ## Create a complete method call message with inline arguments
   let ctx = newSerializationContext()
+  {.push warning[Deprecated]: off.}
   let call = methodCallBasic(methodName, typeName, argsInline)
+  {.pop.}
   newRemotingMessage(ctx, methodCall = some(call))
 
-proc createMethodReturnMessage*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): RemotingMessage =
+proc createMethodReturnMessage*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): RemotingMessage
+    {.deprecated: "use createMethodReturnResponse with a RemotingValue".} =
   ## Create a complete method return message
   let ctx = newSerializationContext()
+  {.push warning[Deprecated]: off.}
   let ret = methodReturnBasic(returnValue)
+  {.pop.}
   newRemotingMessage(ctx, methodReturn = some(ret))
 
-proc createMethodReturnVoidMessage*(): RemotingMessage =
+proc createMethodReturnVoidMessage*(): RemotingMessage
+    {.deprecated: "use createMethodReturnResponse(nullValue())".} =
   ## Create a complete method return message with void result
   let ctx = newSerializationContext()
+  {.push warning[Deprecated]: off.}
   let ret = methodReturnVoid()
+  {.pop.}
   newRemotingMessage(ctx, methodReturn = some(ret))
 
 #

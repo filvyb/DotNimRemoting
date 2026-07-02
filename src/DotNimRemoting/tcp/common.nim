@@ -94,11 +94,15 @@ proc createMethodReturnExceptionResponse*(exception: RemotingValue): seq[byte] =
                                callArray = @[exception])
   serializeRemotingMessage(msg, ctx)
 
-proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
+proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte]
+    {.deprecated: "use createMethodCallRequest with seq[RemotingValue]".} =
   ## Method call request with inline primitive arguments
-  serializeRemotingMessage(createMethodCallMessage(methodName, qualifiedTypeName(typeName), args))
+  {.push warning[Deprecated]: off.}
+  result = serializeRemotingMessage(createMethodCallMessage(methodName, qualifiedTypeName(typeName), args))
+  {.pop.}
 
-proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue =
+proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue
+    {.deprecated: "use the RemotingValue accessors (getInt32, getString, ...)".} =
   ## Converts a RemotingValue holding a primitive or string into a
   ## PrimitiveValue; anything else (class, array, reference) maps to ptNull.
   case rv.kind
@@ -106,13 +110,15 @@ proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue =
   of rvString: PrimitiveValue(kind: ptString, stringVal: rv.stringRecord.value)
   else: PrimitiveValue(kind: ptNull)
 
-proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue] =
+proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue]
+    {.deprecated: "use callArgs".} =
   ## Extracts the primitive arguments of a method call regardless of the wire
   ## layout chosen by the sender. Returns an empty sequence if there are no arguments or if
   ## the message does not contain a method call.
   if msg.methodCall.isNone:
     return @[]
   let call = msg.methodCall.get
+  {.push warning[Deprecated]: off.}
   if MessageFlag.ArgsInline in call.messageEnum:
     for arg in call.args:
       result.add(arg.value)
@@ -125,6 +131,7 @@ proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue] =
     if msg.methodCallArray.len > 0 and msg.methodCallArray[0].kind == rvArray:
       for elem in msg.methodCallArray[0].arrayVal.elements:
         result.add(toPrimitiveValue(elem))
+  {.pop.}
 
 proc extractMethodCallInfo*(data: seq[byte]): tuple[methodName, typeName: string, isOneWay: bool] =
   ## Extracts method name and type name from serialized message content
@@ -149,11 +156,15 @@ proc extractMethodCallInfo*(data: seq[byte]): tuple[methodName, typeName: string
     # Failed to extract method call info
     return ("", "", false)
 
-proc createMethodReturnResponse*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): seq[byte] =
+proc createMethodReturnResponse*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): seq[byte]
+    {.deprecated: "use createMethodReturnResponse with a RemotingValue".} =
   ## Method return response with an inline primitive return value
-  serializeRemotingMessage(createMethodReturnMessage(returnValue))
-  
-proc extractReturnValue*(data: seq[byte]): PrimitiveValue =
+  {.push warning[Deprecated]: off.}
+  result = serializeRemotingMessage(createMethodReturnMessage(returnValue))
+  {.pop.}
+
+proc extractReturnValue*(data: seq[byte]): PrimitiveValue
+    {.deprecated: "use returnValueOf".} =
   ## Extracts return value from serialized method return message
   ## Returns null primitive value if no return value or if extraction fails
   
@@ -176,9 +187,12 @@ proc extractReturnValue*(data: seq[byte]): PrimitiveValue =
     # Failed to extract return value
     return PrimitiveValue(kind: ptNull)
     
-proc createOneWayMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
+proc createOneWayMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte]
+    {.deprecated: "use createMethodCallRequest with oneWay = true".} =
   ## One-way method call request: a basic call flagged NoReturnValue
+  {.push warning[Deprecated]: off.}
   var call = methodCallBasic(methodName, qualifiedTypeName(typeName), args)
+  {.pop.}
   call.messageEnum.incl(MessageFlag.NoReturnValue)
   let ctx = newSerializationContext()
   serializeRemotingMessage(newRemotingMessage(ctx, methodCall = some(call)))

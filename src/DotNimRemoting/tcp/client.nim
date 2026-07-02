@@ -243,30 +243,36 @@ proc callOneWay*(client: NrtpTcpClient, methodName, typeName: string,
 proc callMethod*(client: NrtpTcpClient,
                methodName: string,
                typeName: string,
-               args: seq[PrimitiveValue] = @[]): Future[PrimitiveValue] {.async.} =
+               args: seq[PrimitiveValue] = @[]): Future[PrimitiveValue] {.async, deprecated: "use call".} =
   ## Calls a remote method with primitive arguments and returns the primitive result
   ## This is a higher-level wrapper that handles serialization and deserialization
-  
+
   # Create the request data
+  {.push warning[Deprecated]: off.}
   let requestData = createMethodCallRequest(methodName, typeName, args)
-  
+  {.pop.}
+
   # Invoke the method
   let responseData = await client.invoke(methodName, typeName, false, requestData)
-  
+
   # Extract and return the primitive value
-  return extractReturnValue(responseData)
-  
+  {.push warning[Deprecated]: off.}
+  result = extractReturnValue(responseData)
+  {.pop.}
+
 proc callOneWayMethod*(client: NrtpTcpClient,
                      methodName: string,
                      typeName: string,
-                     args: seq[PrimitiveValue] = @[]): Future[void] {.async.} =
+                     args: seq[PrimitiveValue] = @[]): Future[void] {.async, deprecated: "use callOneWay".} =
   ## Calls a one-way remote method with primitive arguments (no return value)
   ## This is a higher-level wrapper that handles serialization
-  
+
   # Create the request data with one-way flag
+  {.push warning[Deprecated]: off.}
   let requestData = createOneWayMethodCallRequest(methodName, typeName, args)
-  
+  {.pop.}
+
   # Invoke the method with one-way flag
   discard await client.invoke(methodName, typeName, true, requestData)
-  
+
   # Nothing to return for one-way calls
