@@ -23,63 +23,78 @@ requires "dotnimremoting"
 
 ## Quick Start
 
+A single `import DotNimRemoting` brings in everything the examples below use.
+
+### Client Example
+
+```nim
+import DotNimRemoting
+
+proc main() {.async.} =
+  let typename = "DotNimTester.Lib.IEchoService, Lib"
+  let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
+
+  # Plain Nim values convert to arguments; the result is a RemotingValue
+  let greeting = await client.call("Echo", typename, "Hello from Nim")
+  echo "Echo -> ", greeting.getString()
+
+  let sum = await client.call("Add", typename, 40, 2)
+  echo "Add -> ", sum.getInt32()
+
+  # A seq becomes a .NET array
+  let total = await client.call("SumIntArray", typename, @[1'i32, 2, 3])
+  echo "SumIntArray -> ", total.getInt32()
+
+  await client.close()
+
+waitFor main()
+```
+
 ### Server Example
 
 ```nim
-import faststreams/inputs
-import DotNimRemoting/tcp/[server, common]
-import DotNimRemoting/msnrbf/[grammar, enums, helpers]
-import DotNimRemoting/msnrbf/records/member
-import asyncdispatch
+import DotNimRemoting
 
-proc echoHandler(requestUri, methodName, typeName: string, requestData: seq[byte]): Future[seq[byte]] {.async.} =
-  var input = memoryInput(requestData)
-  let msg = readRemotingMessage(input)
-  if msg.methodCall.isSome:
-    let call = msg.methodCall.get
-    if call.args.len > 0 and call.args[0].primitiveType == ptString:
-      let inputStr = call.args[0].value.stringVal.value
-      return createMethodReturnResponse(stringValue(inputStr))
-  return createMethodReturnResponse()
+proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingValue] {.async.} =
+  case methodName
+  of "Echo":
+    return args[0]
+  of "Add":
+    return toRemotingValue(args[0].getInt32 + args[1].getInt32)
+  else:
+    return nullValue()  # void response
 
 proc main() {.async.} =
   let server = newNrtpTcpServer(8080)
-  server.registerHandler("/EchoService", echoHandler)
+  server.registerService("/EchoService", echoService)
   await server.start()
 
 waitFor main()
 ```
 
-### Client Example
+### Custom Classes
+
+Class instances are built with `classValue` and reference a library (assembly)
+record created with `binaryLibrary`:
 
 ```nim
-import faststreams/inputs
-import DotNimRemoting/tcp/[client, common]
-import DotNimRemoting/msnrbf/[helpers, grammar, enums]
-import asyncdispatch
-
-proc main() {.async.} =
-  let typename = "DotNimTester.Lib.IEchoService, Lib"
-  let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
-  await client.connect()
-  let requestData = createMethodCallRequest(
-    methodName = "Echo",
-    typeName = typename,
-    args = @[stringValue("Hello from Nim")]
-  )
-  let responseData = await client.invoke("Echo", typename, false, requestData)
-  
-  # Parse response
-  var input = memoryInput(responseData)
-  let msg = readRemotingMessage(input)
-  if msg.methodReturn.isSome:
-    let ret = msg.methodReturn.get
-    if ret.returnValue.primitiveType == ptString:
-      echo "Response: ", ret.returnValue.value.stringVal.value
-  await client.close()
-
-waitFor main()
+let lib = binaryLibrary("Lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null", 100)
+let person = classValue("DotNimTester.Lib.Person", lib.libraryId, {
+  "Name": toRemotingValue("Ada"),
+  "Age": toRemotingValue(36'i32),
+  "Score": toRemotingValue(99.5),
+})
+let r = await client.call("EchoPerson", typename, @[person], @[lib])
+echo r["Name"].getString(), " is ", r["Age"].getInt32()
 ```
+
+Calls that fail on the .NET side raise `RemoteException`, carrying the .NET
+exception type in `className` and its message in `msg`.
+
+For full-control scenarios (custom records, manual wire layout), the protocol
+layers remain available under `DotNimRemoting/tcp/*` and
+`DotNimRemoting/msnrbf/*` — see `registerHandler`, `invoke` and the
+`msnrbf/records` modules.
 
 ## .NET Interoperability
 
@@ -125,20 +140,26 @@ Creates a new MS-NRTP client for TCP communication.
 - `serverUri`: URI in the format `tcp://hostname:port/path`
 
 ```nim
-proc connect*(client: NrtpTcpClient): Future[void]
+proc call*(client: NrtpTcpClient, methodName, typeName: string,
+           args: varargs[RemotingValue, toRemotingValue]): Future[RemotingValue]
+proc call*(client: NrtpTcpClient, methodName, typeName: string,
+           args: seq[RemotingValue], libraries: seq[BinaryLibrary] = @[]): Future[RemotingValue]
 ```
-Connects to the remote server.
+Calls a remote method and returns its result with member references resolved.
+Picks the wire layout automatically; raises `RemoteException` when the server
+replies with a .NET exception. `callOneWay` is the fire-and-forget variant.
 
 ```nim
-proc invoke*(client: NrtpTcpClient, methodName: string, typeName: string, 
+proc invoke*(client: NrtpTcpClient, methodName: string, typeName: string,
              isOneWay: bool = false, requestData: seq[byte]): Future[seq[byte]]
 ```
-Invokes a remote method and returns the response.
+Lower-level: sends pre-serialized MS-NRBF bytes and returns the raw response.
 
 ```nim
+proc connect*(client: NrtpTcpClient): Future[void]
 proc close*(client: NrtpTcpClient): Future[void]
 ```
-Closes the connection to the remote server.
+Connects to / disconnects from the remote server (`call` connects on demand).
 
 ### TCP Server
 
@@ -148,19 +169,41 @@ proc newNrtpTcpServer*(port: int): NrtpTcpServer
 Creates a new MS-NRTP server for TCP communication.
 
 ```nim
+proc registerService*(server: NrtpTcpServer, path: string, service: ServiceHandler,
+                      libraries: seq[BinaryLibrary] = @[])
+```
+Registers a method-level service for a server object URI path. The handler
+receives the method name and arguments as `RemotingValue`s and returns the
+result value; parsing, layout selection and serialization happen in the
+wrapper.
+
+```nim
 proc registerHandler*(server: NrtpTcpServer, path: string, handler: RequestHandler)
 ```
-Registers a handler for a specific server object URI path.
+Lower-level: registers a raw handler that parses and produces MS-NRBF payload
+bytes itself.
 
 ```nim
 proc start*(server: NrtpTcpServer): Future[void]
-```
-Starts the server and begins listening for connections.
-
-```nim
 proc stop*(server: NrtpTcpServer): Future[void]
 ```
-Stops the server.
+Starts/stops the server.
+
+### Working with values
+
+- `toRemotingValue(x)` — converts Nim bools, ints, floats, strings and seqs
+  of them to `RemotingValue`s; `nullValue()` is the .NET null.
+- `classValue(name, libraryId, members)`, `systemClassValue`,
+  `classArrayValue`, `objectArrayValue` — build class instances and arrays.
+- `objectToClass(obj)` / `classToObject[T](rv)` — convert between plain Nim
+  objects and class values by field name.
+- `binaryLibrary(name, id)` — the assembly record class values reference.
+- `getString`, `getInt32`, `getDouble`, … — typed accessors that raise
+  `ValueError` on kind mismatches; `rv[i]`/`rv.elements` index arrays,
+  `rv["Member"]`/`rv.getMember` look up class members, `rv.className` and
+  `rv.isNull` inspect the value.
+- On parsed messages: `callArgs`, `returnValueOf`, `methodNameOf`,
+  `typeNameOf` extract data with references already resolved.
 
 ## License
 

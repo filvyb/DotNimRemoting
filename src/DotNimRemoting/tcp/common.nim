@@ -1,45 +1,89 @@
 import faststreams/[inputs]
+import strutils, sequtils
 import ../msnrbf/[grammar, context, enums, types, helpers]
-import ../msnrbf/records/[methodinv, member]
+import ../msnrbf/records/[methodinv, member, serialization]
 
-const 
+const
   DefaultTimeout* = 20000 # 20 seconds default timeout
 
-proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
-  ## Creates a binary-formatted method call request
-  ## This will create a RemotingMessage with a BinaryMethodCall record
+proc qualifiedTypeName(typeName: string): string =
+  ## Appends the default assembly version info unless already qualified
+  if "Version=" in typeName: typeName
+  else: typeName & ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
 
-  var fullTypeName = typename & ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+proc isInlineable(value: RemotingValue): bool =
+  ## Primitives and strings travel inline; classes, arrays and nulls cannot
+  value.kind == rvString or
+    (value.kind == rvPrimitive and value.primitiveVal.kind notin {ptNull, ptUnused})
 
-  # Create serialization context
-  let ctx = newSerializationContext()
-  
-  # Create a method call with inline arguments
-  var flags: MessageFlags = {MessageFlag.NoContext}
-  
-  if args.len > 0:
-    flags.incl(MessageFlag.ArgsInline)
+proc inlineValueWithCode(value: RemotingValue): ValueWithCode =
+  case value.kind
+  of rvString:
+    ValueWithCode(primitiveType: ptString,
+                  value: PrimitiveValue(kind: ptString, stringVal: value.stringVal))
+  of rvPrimitive:
+    toValueWithCode(value.primitiveVal)
   else:
-    flags.incl(MessageFlag.NoArgs)
-  
+    raise newException(ValueError, "value of kind " & $value.kind & " cannot travel inline")
+
+proc createMethodCallRequest*(methodName, typeName: string,
+                              args: seq[RemotingValue],
+                              oneWay: bool = false,
+                              libraries: seq[BinaryLibrary] = @[]): seq[byte] =
+  ## Method call request from RemotingValue arguments. Layout matches .NET:
+  ## all-primitive/string args travel inline, otherwise the whole list moves
+  ## into the call array. libraries must cover every referenced library id.
+  var flags: MessageFlags = {MessageFlag.NoContext}
+  if oneWay:
+    flags.incl(MessageFlag.NoReturnValue)
+
   var call = BinaryMethodCall(
     recordType: rtMethodCall,
-    messageEnum: flags,
     methodName: newStringValueWithCode(methodName),
-    typeName: newStringValueWithCode(fullTypeName)
+    typeName: newStringValueWithCode(qualifiedTypeName(typeName))
   )
-  
-  if args.len > 0:
-    var valueWithCodes: seq[ValueWithCode]
-    for arg in args:
-      valueWithCodes.add(toValueWithCode(arg))
-    call.args = valueWithCodes
-  
-  # Create a complete message
-  let msg = newRemotingMessage(ctx, methodCall = some(call))
-  
-  # Serialize to bytes
-  return serializeRemotingMessage(msg)
+  var callArray: seq[RemotingValue]
+  if args.len == 0:
+    flags.incl(MessageFlag.NoArgs)
+  elif args.allIt(isInlineable(it)):
+    flags.incl(MessageFlag.ArgsInline)
+    call.args = args.mapIt(inlineValueWithCode(it))
+  else:
+    flags.incl(MessageFlag.ArgsIsArray)
+    callArray = args
+  call.messageEnum = flags
+
+  let ctx = newSerializationContext()
+  let msg = newRemotingMessage(ctx, methodCall = some(call), callArray = callArray,
+                               libraries = requiredLibraries(args, libraries))
+  serializeRemotingMessage(msg, ctx)
+
+proc createMethodReturnResponse*(value: RemotingValue,
+                                 libraries: seq[BinaryLibrary] = @[]): seq[byte] =
+  ## Method return response. Layout matches .NET: null means no return value,
+  ## primitives/strings travel inline, classes and arrays use the call array.
+  ## libraries must cover every referenced library id.
+  var flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.NoArgs}
+  var ret = BinaryMethodReturn(recordType: rtMethodReturn)
+  var callArray: seq[RemotingValue]
+  if value == nil or value.kind == rvNull:
+    flags.incl(MessageFlag.NoReturnValue)
+  elif isInlineable(value):
+    flags.incl(MessageFlag.ReturnValueInline)
+    ret.returnValue = inlineValueWithCode(value)
+  else:
+    flags.incl(MessageFlag.ReturnValueInArray)
+    callArray = @[value]
+  ret.messageEnum = flags
+
+  let ctx = newSerializationContext()
+  let msg = newRemotingMessage(ctx, methodReturn = some(ret), callArray = callArray,
+                               libraries = requiredLibraries(callArray, libraries))
+  serializeRemotingMessage(msg, ctx)
+
+proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
+  ## Method call request with inline primitive arguments
+  serializeRemotingMessage(createMethodCallMessage(methodName, qualifiedTypeName(typeName), args))
 
 proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue =
   ## Converts a RemotingValue holding a primitive or string into a
@@ -93,32 +137,8 @@ proc extractMethodCallInfo*(data: seq[byte]): tuple[methodName, typeName: string
     return ("", "", false)
 
 proc createMethodReturnResponse*(returnValue: PrimitiveValue = PrimitiveValue(kind: ptNull)): seq[byte] =
-  ## Creates a binary-formatted method return response
-  
-  # Create serialization context
-  let ctx = newSerializationContext()
-  
-  # Create the method return
-  var flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.NoArgs}
-  
-  if returnValue.kind == ptNull:
-    flags.incl(MessageFlag.NoReturnValue)
-  else:
-    flags.incl(MessageFlag.ReturnValueInline)
-  
-  var ret = BinaryMethodReturn(
-    recordType: rtMethodReturn,
-    messageEnum: flags
-  )
-  
-  if returnValue.kind != ptNull:
-    ret.returnValue = toValueWithCode(returnValue)
-  
-  # Create a complete message
-  let msg = newRemotingMessage(ctx, methodReturn = some(ret))
-  
-  # Serialize to bytes
-  return serializeRemotingMessage(msg)
+  ## Method return response with an inline primitive return value
+  serializeRemotingMessage(createMethodReturnMessage(returnValue))
   
 proc extractReturnValue*(data: seq[byte]): PrimitiveValue =
   ## Extracts return value from serialized method return message
@@ -144,37 +164,8 @@ proc extractReturnValue*(data: seq[byte]): PrimitiveValue =
     return PrimitiveValue(kind: ptNull)
     
 proc createOneWayMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
-  ## Creates a one-way binary-formatted method call request
-  ## This will create a RemotingMessage with a BinaryMethodCall record marked as one-way
-  
-  var fullTypeName = typename & ", Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
-    
-  # Create serialization context
+  ## One-way method call request: a basic call flagged NoReturnValue
+  var call = methodCallBasic(methodName, qualifiedTypeName(typeName), args)
+  call.messageEnum.incl(MessageFlag.NoReturnValue)
   let ctx = newSerializationContext()
-  
-  # Create a method call with inline arguments and no return value
-  var flags: MessageFlags = {MessageFlag.NoContext, MessageFlag.NoReturnValue}
-  
-  if args.len > 0:
-    flags.incl(MessageFlag.ArgsInline)
-  else:
-    flags.incl(MessageFlag.NoArgs)
-  
-  var call = BinaryMethodCall(
-    recordType: rtMethodCall,
-    messageEnum: flags,
-    methodName: newStringValueWithCode(methodName),
-    typeName: newStringValueWithCode(fullTypeName)
-  )
-  
-  if args.len > 0:
-    var valueWithCodes: seq[ValueWithCode]
-    for arg in args:
-      valueWithCodes.add(toValueWithCode(arg))
-    call.args = valueWithCodes
-  
-  # Create a complete message
-  let msg = newRemotingMessage(ctx, methodCall = some(call))
-  
-  # Serialize to bytes
-  return serializeRemotingMessage(msg)
+  serializeRemotingMessage(newRemotingMessage(ctx, methodCall = some(call)))

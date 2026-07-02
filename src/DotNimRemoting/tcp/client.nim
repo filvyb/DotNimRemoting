@@ -2,7 +2,8 @@ import asyncnet, asyncdispatch
 import faststreams/[outputs]
 import types, helpers, common
 import strutils, uri
-import ../msnrbf/records/member
+import ../msnrbf/helpers as msnrbf
+import ../msnrbf/records/[member, methodinv, serialization]
 
 type
   NrtpTcpClient* = ref object
@@ -164,6 +165,36 @@ proc invoke*(client: NrtpTcpClient,
   # Receive and return the reply
   debugLog "[CLIENT] Waiting for response"
   return await client.recvReply()
+
+proc call*(client: NrtpTcpClient, methodName, typeName: string,
+           args: seq[RemotingValue],
+           libraries: seq[BinaryLibrary] = @[]): Future[RemotingValue] {.async.} =
+  ## Calls a remote method; the result comes back with references resolved,
+  ## null/void as rvNull. Class-valued args need their binaryLibrary records
+  ## in libraries. Raises RemoteException on a .NET exception reply.
+  let requestData = createMethodCallRequest(methodName, typeName, args,
+                                            libraries = libraries)
+  let responseData = await client.invoke(methodName, typeName, false, requestData)
+  let msg = deserializeRemotingMessage(responseData)
+  return returnValueOf(msg)
+
+proc call*(client: NrtpTcpClient, methodName, typeName: string,
+           args: varargs[RemotingValue, toRemotingValue]): Future[RemotingValue] =
+  ## Converts plain Nim values to arguments: client.call("Add", typeName, 40, 2)
+  call(client, methodName, typeName, @args)
+
+proc callOneWay*(client: NrtpTcpClient, methodName, typeName: string,
+                 args: seq[RemotingValue],
+                 libraries: seq[BinaryLibrary] = @[]): Future[void] {.async.} =
+  ## Calls a one-way remote method; no response is expected
+  let requestData = createMethodCallRequest(methodName, typeName, args,
+                                            oneWay = true, libraries = libraries)
+  discard await client.invoke(methodName, typeName, true, requestData)
+
+proc callOneWay*(client: NrtpTcpClient, methodName, typeName: string,
+                 args: varargs[RemotingValue, toRemotingValue]): Future[void] =
+  ## Converts plain Nim values to arguments
+  callOneWay(client, methodName, typeName, @args)
 
 proc callMethod*(client: NrtpTcpClient,
                methodName: string,

@@ -1,13 +1,21 @@
 import asyncnet, asyncdispatch
-import faststreams/[outputs]
-import types, helpers
+import faststreams/[inputs, outputs]
+import types, helpers, common
 import strutils, tables, uri
+import ../msnrbf/grammar
+import ../msnrbf/helpers as msnrbf
+import ../msnrbf/records/[methodinv, serialization]
 
 type
-  RequestHandler* = proc(requestUri: string, 
-                        methodName: string, 
-                        typeName: string, 
+  RequestHandler* = proc(requestUri: string,
+                        methodName: string,
+                        typeName: string,
                         requestData: seq[byte]): Future[seq[byte]] {.async.}
+
+  ServiceHandler* = proc(methodName: string,
+                         args: seq[RemotingValue]): Future[RemotingValue] {.async.}
+    ## Handler for registerService: method name and resolved args in, result
+    ## value out; return nullValue() for void
 
   NrtpTcpServer* = ref object
     socket: AsyncSocket
@@ -26,8 +34,24 @@ proc newNrtpTcpServer*(port: int): NrtpTcpServer =
   )
 
 proc registerHandler*(server: NrtpTcpServer, path: string, handler: RequestHandler) =
-  ## Registers a handler for a specific server object URI path
+  ## Registers a raw handler that parses and produces MS-NRBF payload bytes
+  ## itself; most services are easier to write with registerService
   server.handlers[path] = handler
+
+proc registerService*(server: NrtpTcpServer, path: string, service: ServiceHandler,
+                      libraries: seq[BinaryLibrary] = @[]) =
+  ## Registers a method-level service: requests are parsed for the handler
+  ## and its result is serialized back with the right wire layout. libraries
+  ## lists the binaryLibrary records class-valued results may reference.
+  proc wrapper(requestUri, methodName, typeName: string,
+               requestData: seq[byte]): Future[seq[byte]] {.async.} =
+    var input = memoryInput(requestData)
+    let msg = readRemotingMessage(input)
+    if msg.methodCall.isNone:
+      return createMethodReturnResponse()
+    let ret = await service(methodNameOf(msg), callArgs(msg))
+    return createMethodReturnResponse(ret, libraries)
+  server.registerHandler(path, wrapper)
 
 proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   ## Processes a client connection, serving requests until the client

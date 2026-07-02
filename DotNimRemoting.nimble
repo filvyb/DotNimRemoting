@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.9.6"
+version       = "0.9.9"
 author        = "Filip Vybihal"
 description   = "Library for communicating with .NET applications using MS-NRTP"
 license       = "MIT"

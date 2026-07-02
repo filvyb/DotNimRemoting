@@ -1,33 +1,26 @@
-import asyncdispatch
-import ../src/DotNimRemoting/tcp/[server, common, helpers]
-import ../src/DotNimRemoting/msnrbf/helpers
+import ../src/DotNimRemoting
 
-# Example server usage
-proc handleRequest(requestUri, methodName, typeName: string,
-                  requestData: seq[byte]): Future[seq[byte]] {.async.} =
-  # Extract method and arguments from the request
-  let info = extractMethodCallInfo(requestData)
-  echo "Received request for method: ", info.methodName, " on type: ", info.typeName
-  
-  # In a real implementation, you would dispatch to the actual method
-  # and serialize its return value
-  
-  # For this example, just return a simple response
-  return createMethodReturnResponse(stringValue("Method execution successful"))
+# Example server: a method-level service handler
+proc myService(methodName: string, args: seq[RemotingValue]): Future[RemotingValue] {.async.} =
+  echo "Received call: ", methodName
+  case methodName
+  of "Echo":
+    return args[0]
+  of "Add":
+    return toRemotingValue(args[0].getInt32 + args[1].getInt32)
+  of "SumIntArray":
+    var sum = 0'i32
+    for elem in args[0].elements:
+      sum += elem.getInt32
+    return toRemotingValue(sum)
+  else:
+    # Unknown method: reply void
+    return nullValue()
 
 proc serverExample() {.async.} =
   let server = newNrtpTcpServer(8080)
-  
-  # Register handlers
-  server.registerHandler("/MyServer.rem", handleRequest)
-  
-  # Start the server
+  server.registerService("/MyServer.rem", myService)
   await server.start()
-  echo "Server started on port 8080"
-
-  # Keep the server running
-  while true:
-    await sleepAsync(1000)
 
 # Run server example
 when isMainModule:
