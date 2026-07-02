@@ -59,3 +59,49 @@ proc employeeValue*(name: string, home: RemotingValue): RemotingValue =
 proc employeeArrayValue*(employees: seq[RemotingValue]): RemotingValue =
   ## Employee[] as a typed class array
   classArrayValue(EmployeeClassName, PersonLibraryId, employees)
+
+# Node is the self-referential C# class used by the cyclic-graph and deep-list
+# tests. classToObject cannot materialize it (a Nim object can't contain
+# itself), so the tests walk the RemotingValue graph directly.
+
+const NodeClassName* = "DotNimTester.Lib.Node"
+const NodeLayout* = @["Label", "Next"]
+  ## Member layout fallback for Node values arriving as ClassWithId
+
+proc nodeValue*(label: string, next: RemotingValue): RemotingValue =
+  classValue(NodeClassName, PersonLibraryId,
+    {"Label": toRemotingValue(label), "Next": next})
+
+proc setNext*(node, next: RemotingValue) =
+  ## Rewires Next in place; closing a cycle is only possible after the
+  ## referenced nodes exist
+  node.classVal.members[1] = next
+
+proc nextOf*(node: RemotingValue): RemotingValue =
+  getMember(node, "Next", NodeLayout)
+
+proc labelOf*(node: RemotingValue): string =
+  getMember(node, "Label", NodeLayout).getString
+
+proc ringValue*(size: int): RemotingValue =
+  ## Cyclic list n0 -> n1 -> ... -> n(size-1) -> n0; the writer must emit the
+  ## closing edge as a MemberReference to a record it is still writing
+  result = nodeValue("n0", nullValue())
+  var tail = result
+  for i in 1..<size:
+    let n = nodeValue("n" & $i, nullValue())
+    setNext(tail, n)
+    tail = n
+  setNext(tail, result)
+
+proc chainValue*(depth: int): RemotingValue =
+  ## Straight list d0 -> d1 -> ... -> null, built tail-first so construction
+  ## needs no recursion; serialization still nests depth levels on the wire
+  result = nullValue()
+  for i in countdown(depth - 1, 0):
+    result = nodeValue("d" & $i, result)
+
+proc kleinValue*(): RemotingValue =
+  ## object[2] whose element 0 is the array itself
+  result = objectArrayValue(@[nullValue(), toRemotingValue("hi")])
+  result.arrayVal.elements[0] = result

@@ -481,6 +481,29 @@ proc `[]`*(value: RemotingValue, index: int): RemotingValue =
   expectKind(value, rvArray)
   value.arrayVal.elements[index]
 
+proc arrayLengths*(value: RemotingValue): seq[int32] =
+  ## Dimension lengths of an array value; single-dimensional array records
+  ## report their one length. Multi-dimensional arrays store their elements
+  ## flattened in row-major order.
+  expectKind(value, rvArray)
+  let rec = value.arrayVal.record
+  case rec.kind
+  of rtBinaryArray: rec.binaryArray.lengths
+  of rtArraySingleObject: @[rec.arraySingleObject.arrayInfo.length]
+  of rtArraySinglePrimitive: @[rec.arraySinglePrimitive.arrayInfo.length]
+  of rtArraySingleString: @[rec.arraySingleString.arrayInfo.length]
+  else: @[value.arrayVal.elements.len.int32]
+
+proc arrayLowerBounds*(value: RemotingValue): seq[int32] =
+  ## Lower bound of each dimension; all zeros when the record carries none.
+  ## Non-zero bounds come from .NET arrays created with Array.CreateInstance.
+  expectKind(value, rvArray)
+  let rec = value.arrayVal.record
+  if rec.kind == rtBinaryArray and rec.binaryArray.lowerBounds.len > 0:
+    rec.binaryArray.lowerBounds
+  else:
+    newSeq[int32](arrayLengths(value).len)
+
 proc className*(value: RemotingValue): string =
   ## Class name; empty for ClassWithId records, which carry no metadata
   expectKind(value, rvClass)
@@ -642,6 +665,82 @@ proc classArrayValue*(className: string, libraryId: int32,
         typeName: LengthPrefixedString(value: className),
         libraryId: libraryId
       ))
+    )),
+    elements: elements
+  ))
+
+proc charArrayValue*(chars: seq[string]): RemotingValue =
+  ## A .NET char[] (ArraySinglePrimitive of Char); each element must be one
+  ## Unicode character. Chars travel as UTF-8, making this the one primitive
+  ## array whose elements vary in width on the wire.
+  var elements: seq[RemotingValue]
+  for c in chars:
+    elements.add(toRemotingValue(charValue(c)))
+  RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+    record: ArrayRecord(kind: rtArraySinglePrimitive,
+                        arraySinglePrimitive: arraySinglePrimitive(chars.len, ptChar)),
+    elements: elements
+  ))
+
+proc binaryArrayValue*(lengths: seq[int32], elements: seq[RemotingValue],
+                       lowerBounds: seq[int32] = @[]): RemotingValue =
+  ## A .NET array that needs the general BinaryArray record: rank = lengths.len
+  ## with the elements flattened in row-major order, plus optional non-zero
+  ## lower bounds (arrays created with Array.CreateInstance). Element typing is
+  ## derived from the elements: one uniform primitive kind maps to a primitive
+  ## array, strings (and nulls) to a string array, everything else to object.
+  var product = 1'i64
+  for length in lengths:
+    if length < 0:
+      raise newException(ValueError, "Array dimension length cannot be negative")
+    product *= length.int64
+  if product != elements.len.int64:
+    raise newException(ValueError, "lengths product (" & $product &
+      ") does not match element count (" & $elements.len & ")")
+  if lowerBounds.len != 0 and lowerBounds.len != lengths.len:
+    raise newException(ValueError, "lowerBounds must have one bound per dimension")
+
+  var hasOffset = false
+  for bound in lowerBounds:
+    if bound != 0:
+      hasOffset = true
+      break
+  let arrayType =
+    if lengths.len == 1:
+      if hasOffset: batSingleOffset else: batSingle
+    elif hasOffset: batRectangularOffset
+    else: batRectangular
+
+  var typeEnum = btObject
+  var additionalInfo = AdditionalTypeInfo(kind: btObject)
+  if elements.len > 0:
+    var uniformPrimitive = elements[0].kind == rvPrimitive and
+                           elements[0].primitiveVal.kind notin {ptString, ptNull}
+    var stringsOnly = true
+    for elem in elements:
+      if uniformPrimitive and
+         (elem.kind != rvPrimitive or
+          elem.primitiveVal.kind != elements[0].primitiveVal.kind):
+        uniformPrimitive = false
+      if elem.kind notin {rvString, rvNull}:
+        stringsOnly = false
+    if uniformPrimitive:
+      typeEnum = btPrimitive
+      additionalInfo = AdditionalTypeInfo(kind: btPrimitive,
+                                          primitiveType: elements[0].primitiveVal.kind)
+    elif stringsOnly:
+      typeEnum = btString
+      additionalInfo = AdditionalTypeInfo(kind: btString)
+
+  RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+    record: ArrayRecord(kind: rtBinaryArray, binaryArray: BinaryArray(
+      recordType: rtBinaryArray,
+      binaryArrayType: arrayType,
+      rank: lengths.len.int32,
+      lengths: lengths,
+      lowerBounds: if hasOffset: lowerBounds else: @[],
+      typeEnum: typeEnum,
+      additionalTypeInfo: additionalInfo
     )),
     elements: elements
   ))

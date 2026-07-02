@@ -270,11 +270,20 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
   if MessageFlag.ArgsInline in result.messageEnum:
     result.args = readArrayOfValueWithCode(inp)
 
-const MaxValueNestingDepth* {.intdefine.} = 10_000
-  ## Upper bound on class/array nesting while reading; input beyond this
-  ## depth is rejected rather than risking stack overflow on hostile data.
-  ## Override at compile time with -d:MaxValueNestingDepth=N. Debug builds
-  ## abort earlier via Nim's call depth guard (-d:nimCallDepthLimit)
+const nimCallDepthLimit {.intdefine.} = 2000
+  ## Mirrors the stdlib call-depth guard and its -d:nimCallDepthLimit override
+
+const defaultMaxNesting =
+  when compileOption("stackTrace"):
+    # ~2 stack frames per nesting level: stay under the fatal call-depth
+    # guard so deep input raises IOError instead of aborting the process
+    max((nimCallDepthLimit - 200) div 2, 100)
+  else:
+    10_000
+
+const MaxValueNestingDepth* {.intdefine.} = defaultMaxNesting
+  ## Upper bound on class/array nesting while reading, rejecting deeper input
+  ## rather than risking stack overflow. Override with -d:MaxValueNestingDepth=N
 
 proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext, depth: int = 0): RemotingValue =
   ## Reads any member reference and referenceables from the input stream into a RemotingValue.

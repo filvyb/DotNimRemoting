@@ -9,6 +9,42 @@ namespace Client
     {
         static int failures = 0;
 
+        // Deep enough to catch recursion disasters on either side while
+        // staying under the Nim reader's MaxValueNestingDepth guard, which
+        // tracks the -d:nimCallDepthLimit=30000 set by run_integration_mono.sh.
+        // Keep in sync with DeepDepth in tests/nim/client.nim.
+        const int DeepDepth = 6000;
+
+        static Node BuildRing(int size)
+        {
+            Node head = new Node { Label = "n0" };
+            Node tail = head;
+            for (int i = 1; i < size; i++)
+            {
+                tail.Next = new Node { Label = "n" + i };
+                tail = tail.Next;
+            }
+            tail.Next = head;
+            return head;
+        }
+
+        static Node BuildChain(int depth)
+        {
+            Node head = null;
+            for (int i = depth - 1; i >= 0; i--)
+                head = new Node { Label = "d" + i, Next = head };
+            return head;
+        }
+
+        static bool DecimalBitsEqual(decimal a, decimal b)
+        {
+            int[] ba = decimal.GetBits(a);
+            int[] bb = decimal.GetBits(b);
+            for (int i = 0; i < 4; i++)
+                if (ba[i] != bb[i]) return false;
+            return true;
+        }
+
         static void Check(string name, object actual, object expected)
         {
             bool ok = Equals(actual, expected);
@@ -265,6 +301,98 @@ namespace Client
             }
             // An exception reply is a normal reply: the channel must stay usable
             Check("Echo(after exception)", service.Echo("still alive"), "still alive");
+
+            // Cyclic graphs: the Nim server builds a ring whose closing edge
+            // travels as a MemberReference; .NET must materialize one loop
+            Node ring = service.MakeRing(5);
+            bool ringOk = ring != null && ring.Label == "n0";
+            Node cursor = ring;
+            for (int i = 1; i < 5 && ringOk; i++)
+            {
+                cursor = cursor.Next;
+                ringOk = cursor != null && cursor.Label == "n" + i
+                    && !ReferenceEquals(cursor, ring);
+            }
+            ringOk = ringOk && cursor != null && ReferenceEquals(cursor.Next, ring);
+            Console.WriteLine("MakeRing(5) -> " + (ringOk ? "closed ring (PASS)" : "broken (FAIL)"));
+            if (!ringOk) failures++;
+
+            Node narcissist = service.MakeNarcissist();
+            Check("MakeNarcissist", narcissist != null && ReferenceEquals(narcissist.Next, narcissist), true);
+
+            object[] klein = service.MakeKlein();
+            Check("MakeKlein", klein != null && klein.Length == 2
+                && ReferenceEquals(klein[0], klein) && Equals(klein[1], "hi"), true);
+
+            // The mirror direction: .NET builds the pathological graphs and the
+            // Nim server must answer from reference identity, not value equality
+            Check("IsRing(ring of 4)", service.IsRing(BuildRing(4), 4), true);
+            Check("IsRing(open chain)", service.IsRing(BuildChain(3), 3), false);
+            Node self = new Node { Label = "me" };
+            self.Next = self;
+            Check("IsRing(narcissist)", service.IsRing(self, 1), true);
+            object[] kleinArg = new object[2];
+            kleinArg[0] = kleinArg;
+            kleinArg[1] = "hi";
+            Check("IsKlein", service.IsKlein(kleinArg), true);
+            Check("IsKlein(innocent)", service.IsKlein(new object[] { "a", "b" }), false);
+
+            // char[] elements are UTF-8 on the wire: 1-, 2- and 3-byte chars
+            // mean the array cannot be read by seeking, only by decoding
+            char[] chars = new char[] { 'a', ' ', 'Ω', '中', 'ř' };
+            CheckSeq("EchoCharArray", service.EchoCharArray(chars), chars);
+
+            // Rank-2 rectangular arrays (BinaryArray records, row-major)
+            int[,] matrix = { { 1, 2, 3 }, { 4, 5, 6 } };
+            int[,] echoedMatrix = service.EchoMatrix(matrix);
+            bool matrixOk = echoedMatrix != null && echoedMatrix.Rank == 2
+                && echoedMatrix.GetLength(0) == 2 && echoedMatrix.GetLength(1) == 3;
+            if (matrixOk)
+                for (int i = 0; i < 2; i++)
+                    for (int j = 0; j < 3; j++)
+                        if (echoedMatrix[i, j] != matrix[i, j]) matrixOk = false;
+            Console.WriteLine("EchoMatrix -> " + (matrixOk ? "2x3 intact (PASS)" : "mangled (FAIL)"));
+            if (!matrixOk) failures++;
+            Check("SumMatrix", service.SumMatrix(matrix), 21);
+            int[,] made = service.MakeMatrix(3, 2);
+            bool madeOk = made != null && made.Rank == 2
+                && made.GetLength(0) == 3 && made.GetLength(1) == 2;
+            if (madeOk)
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 2; j++)
+                        if (made[i, j] != i * 10 + j) madeOk = false;
+            Console.WriteLine("MakeMatrix(3,2) -> " + (madeOk ? "3x2 filled (PASS)" : "mangled (FAIL)"));
+            if (!madeOk) failures++;
+
+            // Non-zero lower bounds: a string[*] starting at index 7, built by
+            // the Nim server. No DescribeVintage call here: Mono's
+            // BinaryFormatter can deserialize such arrays but crashes
+            // serializing them (ObjectWriter.WriteArray
+            // IndexOutOfRangeException), so only this direction is testable.
+            Array vintage = service.MakeVintageArray();
+            bool vintageOk = vintage != null && vintage.Rank == 1
+                && vintage.GetLowerBound(0) == 7 && vintage.Length == 3
+                && Equals(vintage.GetValue(7), "seven")
+                && Equals(vintage.GetValue(8), "eight")
+                && Equals(vintage.GetValue(9), "nine");
+            Console.WriteLine("MakeVintageArray -> " + (vintageOk ? "bounds 7..9 (PASS)" : "wrong shape (FAIL)"));
+            if (!vintageOk) failures++;
+
+            // Decimal identity: 1.100m and 1.1m are equal but not identical
+            // (different scale); the wire string must preserve trailing zeros
+            decimal scaled = 1.100m;
+            Check("EchoDecimal(scale)", DecimalBitsEqual(service.EchoDecimal(scaled), scaled), true);
+            Check("EchoDecimal(max)", service.EchoDecimal(decimal.MaxValue), decimal.MaxValue);
+            Check("EchoDecimal(min)", service.EchoDecimal(decimal.MinValue), decimal.MinValue);
+
+            // Deep nesting: a DeepDepth-long chain nests that many class
+            // records on the wire in both directions
+            Node deep = service.MakeDeepList(DeepDepth);
+            int walked = 0;
+            for (Node c = deep; c != null; c = c.Next)
+                walked++;
+            Check("MakeDeepList(" + DeepDepth + ")", walked, DeepDepth);
+            Check("DepthOf(" + DeepDepth + ")", service.DepthOf(BuildChain(DeepDepth)), DeepDepth);
 
             if (failures > 0)
             {

@@ -25,6 +25,15 @@ namespace DotNimTester.Lib
         public Address Home;
     }
 
+    [System.Serializable]
+    public class Node
+    {
+        // Self-referential class: cycles and deep chains on the wire travel
+        // as MemberReference records back into the object graph
+        public string Label;
+        public Node Next;
+    }
+
     public interface IEchoService
     {
         // string round-trip
@@ -114,5 +123,37 @@ namespace DotNimTester.Lib
         string GetLastOneWayMessage();
         // always throws; the return message carries the exception
         void ThrowError(string message);
+
+        // cyclic graph return: ring of size nodes, last.Next == first
+        Node MakeRing(int size);
+        // single node whose Next is itself
+        Node MakeNarcissist();
+        // object[] whose element 0 is the array itself
+        object[] MakeKlein();
+        // walks Next from head; true only when the walk returns to head in
+        // exactly expectedSize steps (identity, not value, comparison)
+        bool IsRing(Node head, int expectedSize);
+        // true when arr[0] is the same instance as arr
+        bool IsKlein(object[] arr);
+
+        // char[] round-trip: the only primitive array whose elements are
+        // variable width on the wire (each char is UTF-8 encoded)
+        char[] EchoCharArray(char[] values);
+
+        // rank-2 rectangular array round-trip (BinaryArray, row-major)
+        int[,] EchoMatrix(int[,] m);
+        // proves the receiver materialized the matrix, not just echoed bytes
+        int SumMatrix(int[,] m);
+        // server-built rank-2 array with [i,j] = i*10+j
+        int[,] MakeMatrix(int rows, int cols);
+        // string[*] with lower bound 7 (BinaryArray SingleOffset on the wire)
+        System.Array MakeVintageArray();
+        // describes a non-zero-lower-bound string array as "lb:len:joined"
+        string DescribeVintage(System.Array values);
+
+        // deep-nesting stress: chain of depth nodes ending in null
+        Node MakeDeepList(int depth);
+        // counts nodes until Next == null
+        int DepthOf(Node head);
     }
 }

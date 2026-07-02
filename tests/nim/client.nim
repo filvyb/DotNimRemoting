@@ -8,6 +8,12 @@ import interop
 
 const typename = "DotNimTester.Lib.IEchoService, Lib"
 
+const DeepDepth = 6000
+  ## Deep enough to catch recursion disasters on either side while staying
+  ## under the reader's MaxValueNestingDepth guard, which tracks the
+  ## -d:nimCallDepthLimit=30000 set by run_integration_mono.sh (-> 14900
+  ## levels). Keep in sync with DeepDepth in tests/dotnet/Client/Program.cs.
+
 proc main() {.async.} =
   let client = newNrtpTcpClient("tcp://127.0.0.1:8080/EchoService")
   await client.connect()
@@ -440,6 +446,158 @@ proc main() {.async.} =
         "ThrowError: unexpected exception type " & e.className
       doAssert "boom from Nim" in e.msg, "ThrowError: exception message mismatch"
     doAssert caught, "ThrowError: expected RemoteException"
+
+  block makeRing:
+    # Cyclic return: the closing edge arrives as a MemberReference to a node
+    # earlier in the stream; after resolution the graph must be one loop of
+    # five distinct nodes (identity, not value, comparisons)
+    let head = await client.call("MakeRing", typename, 5)
+    doAssert head.kind == rvClass, "MakeRing: expected class, got " & $head.kind
+    var cursor = head
+    for i in 1..<5:
+      cursor = nextOf(cursor)
+      doAssert cursor.kind == rvClass, "MakeRing: chain broken at step " & $i
+      doAssert labelOf(cursor) == "n" & $i, "MakeRing: wrong label at step " & $i
+      doAssert cursor != head, "MakeRing: looped back too early at step " & $i
+    doAssert nextOf(cursor) == head, "MakeRing: last Next must be the head instance"
+    echo "MakeRing(5) -> closed ring"
+
+  block makeNarcissist:
+    let r = await client.call("MakeNarcissist", typename)
+    doAssert r.kind == rvClass, "MakeNarcissist: expected class, got " & $r.kind
+    doAssert nextOf(r) == r, "MakeNarcissist: Next must be the node itself"
+    echo "MakeNarcissist -> Next is itself"
+
+  block makeKlein:
+    # An array containing itself as element 0
+    let r = await client.call("MakeKlein", typename)
+    doAssert r.kind == rvArray, "MakeKlein: expected array, got " & $r.kind
+    doAssert r.len == 2
+    doAssert r[0] == r, "MakeKlein: element 0 must be the array itself"
+    doAssert r[1].getString == "hi"
+    echo "MakeKlein -> array contains itself"
+
+  block isRing:
+    # Nim builds the cycle: the writer must emit the closing edge as a
+    # MemberReference to a record it has already started writing
+    let r = await client.call("IsRing", typename,
+      @[ringValue(4), toRemotingValue(4)], @[personLibrary()])
+    echo "IsRing(ring of 4) -> ", r.getBool
+    doAssert r.getBool == true, "IsRing(ring): expected true"
+
+  block isRingOpenChain:
+    let r = await client.call("IsRing", typename,
+      @[chainValue(3), toRemotingValue(3)], @[personLibrary()])
+    echo "IsRing(open chain) -> ", r.getBool
+    doAssert r.getBool == false, "IsRing(open chain): expected false"
+
+  block isRingNarcissist:
+    let me = nodeValue("me", nullValue())
+    setNext(me, me)
+    let r = await client.call("IsRing", typename,
+      @[me, toRemotingValue(1)], @[personLibrary()])
+    echo "IsRing(narcissist) -> ", r.getBool
+    doAssert r.getBool == true, "IsRing(narcissist): expected true"
+
+  block isKlein:
+    let r = await client.call("IsKlein", typename, @[kleinValue()])
+    echo "IsKlein -> ", r.getBool
+    doAssert r.getBool == true, "IsKlein: expected true"
+
+  block isKleinInnocent:
+    let r = await client.call("IsKlein", typename,
+      @[objectArrayValue(@[toRemotingValue("a"), toRemotingValue("b")])])
+    echo "IsKlein(innocent) -> ", r.getBool
+    doAssert r.getBool == false, "IsKlein(innocent): expected false"
+
+  block echoCharArray:
+    # 1-, 2- and 3-byte UTF-8 chars: the array is variable width on the wire,
+    # so it can only be read by decoding, never by seeking
+    let sent = @["a", " ", "Ω", "中", "ř"]
+    let r = await client.call("EchoCharArray", typename, @[charArrayValue(sent)])
+    doAssert r.kind == rvArray, "EchoCharArray: expected array, got " & $r.kind
+    echo "EchoCharArray -> ", r.len, " elements"
+    doAssert r.len == sent.len
+    for i, c in sent:
+      doAssert r[i].getChar == c,
+        "EchoCharArray[" & $i & "]: expected " & c & ", got " & r[i].getChar
+
+  block echoMatrix:
+    # Rank-2 rectangular BinaryArray, elements row-major
+    let sent = binaryArrayValue(@[2'i32, 3'i32],
+      @[toRemotingValue(1'i32), toRemotingValue(2'i32), toRemotingValue(3'i32),
+        toRemotingValue(4'i32), toRemotingValue(5'i32), toRemotingValue(6'i32)])
+    let r = await client.call("EchoMatrix", typename, @[sent])
+    doAssert r.kind == rvArray, "EchoMatrix: expected array, got " & $r.kind
+    echo "EchoMatrix -> lengths ", arrayLengths(r)
+    doAssert arrayLengths(r) == @[2'i32, 3'i32], "EchoMatrix: wrong shape"
+    for i in 0..<6:
+      doAssert r[i].getInt32 == int32(i + 1), "EchoMatrix[" & $i & "]: wrong value"
+
+  block sumMatrix:
+    let m = binaryArrayValue(@[2'i32, 3'i32],
+      @[toRemotingValue(1'i32), toRemotingValue(2'i32), toRemotingValue(3'i32),
+        toRemotingValue(4'i32), toRemotingValue(5'i32), toRemotingValue(6'i32)])
+    let r = await client.call("SumMatrix", typename, @[m])
+    echo "SumMatrix -> ", r.getInt32
+    doAssert r.getInt32 == 21, "SumMatrix: .NET failed to materialize the matrix"
+
+  block makeMatrix:
+    let r = await client.call("MakeMatrix", typename, 3, 2)
+    doAssert r.kind == rvArray, "MakeMatrix: expected array, got " & $r.kind
+    echo "MakeMatrix(3,2) -> lengths ", arrayLengths(r)
+    doAssert arrayLengths(r) == @[3'i32, 2'i32], "MakeMatrix: wrong shape"
+    for i in 0..<3:
+      for j in 0..<2:
+        doAssert r[i * 2 + j].getInt32 == int32(i * 10 + j),
+          "MakeMatrix[" & $i & "," & $j & "]: wrong value"
+
+  # No MakeVintageArray here: Mono's BinaryFormatter can deserialize
+  # non-zero-lower-bound arrays but crashes serializing them
+  # (ObjectWriter.WriteArray IndexOutOfRangeException), so only the
+  # Nim-writes/Mono-reads direction is testable.
+  block describeVintage:
+    # A .NET array with lower bound 7: BinaryArray SingleOffset on the wire
+    let vintage = binaryArrayValue(@[3'i32],
+      @[toRemotingValue("seven"), toRemotingValue("eight"), toRemotingValue("nine")],
+      lowerBounds = @[7'i32])
+    let r = await client.call("DescribeVintage", typename, @[vintage])
+    echo "DescribeVintage -> ", r.getString
+    doAssert r.getString == "7:3:seven,eight,nine",
+      "DescribeVintage: .NET saw wrong bounds or content"
+
+  block echoDecimalScale:
+    # 1.100m and 1.1m are equal but not identical in .NET (different scale);
+    # the wire string must keep the trailing zeros through the round-trip
+    let r = await client.call("EchoDecimal", typename, decimalValue("1.100"))
+    echo "EchoDecimal(1.100) -> ", r.getDecimal
+    doAssert r.getDecimal == "1.100", "EchoDecimal: decimal scale lost"
+
+  block echoDecimalExtremes:
+    let maxVal = "79228162514264337593543950335"
+    let r = await client.call("EchoDecimal", typename, decimalValue(maxVal))
+    echo "EchoDecimal(max) -> ", r.getDecimal
+    doAssert r.getDecimal == maxVal
+    let rMin = await client.call("EchoDecimal", typename, decimalValue("-" & maxVal))
+    doAssert rMin.getDecimal == "-" & maxVal
+
+  block makeDeepList:
+    # DeepDepth nested class records in the reply
+    let head = await client.call("MakeDeepList", typename, DeepDepth)
+    var depth = 0
+    var cursor = head
+    while cursor.kind == rvClass:
+      inc depth
+      cursor = nextOf(cursor)
+    echo "MakeDeepList(", DeepDepth, ") -> walked ", depth
+    doAssert depth == DeepDepth, "MakeDeepList: expected " & $DeepDepth & ", got " & $depth
+
+  block depthOf:
+    # DeepDepth nested class records in the request
+    let r = await client.call("DepthOf", typename,
+      @[chainValue(DeepDepth)], @[personLibrary()])
+    echo "DepthOf(", DeepDepth, ") -> ", r.getInt32
+    doAssert r.getInt32 == DeepDepth.int32
 
   await client.close()
   echo "All Nim client calls passed."

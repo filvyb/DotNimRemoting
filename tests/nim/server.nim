@@ -133,6 +133,68 @@ proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingV
     # registerService serializes raised exceptions as System.Exception
     # returns, which the .NET client materializes and rethrows
     raise newException(ValueError, args[0].getString)
+  of "MakeRing":
+    return ringValue(args[0].getInt32)
+  of "MakeNarcissist":
+    let n = nodeValue("me", nullValue())
+    setNext(n, n)
+    return n
+  of "MakeKlein":
+    return kleinValue()
+  of "IsRing":
+    # Identity walk: resolveReferences must have turned the closing
+    # MemberReference back into the head node itself
+    let head = args[0]
+    let expected = args[1].getInt32
+    var ok = head.kind == rvClass and expected >= 1
+    if ok:
+      var current = head
+      for i in 1..<expected:
+        current = nextOf(current)
+        if current.kind != rvClass or current == head:
+          ok = false
+          break
+      if ok:
+        ok = nextOf(current) == head
+    return toRemotingValue(ok)
+  of "IsKlein":
+    let arr = args[0]
+    return toRemotingValue(arr.kind == rvArray and arr.len > 0 and arr[0] == arr)
+  of "EchoCharArray", "EchoMatrix":
+    return args[0]
+  of "SumMatrix":
+    var sum = 0'i32
+    for elem in args[0].elements:
+      sum += elem.getInt32
+    return toRemotingValue(sum)
+  of "MakeMatrix":
+    let rows = args[0].getInt32
+    let cols = args[1].getInt32
+    var elems: seq[RemotingValue]
+    for i in 0..<rows:
+      for j in 0..<cols:
+        elems.add(toRemotingValue(i * 10 + j))
+    return binaryArrayValue(@[rows, cols], elems)
+  of "MakeVintageArray":
+    return binaryArrayValue(@[3'i32],
+      @[toRemotingValue("seven"), toRemotingValue("eight"), toRemotingValue("nine")],
+      lowerBounds = @[7'i32])
+  of "DescribeVintage":
+    let arr = args[0]
+    var parts: seq[string]
+    for elem in arr.elements:
+      parts.add(elem.getString)
+    return toRemotingValue($arrayLowerBounds(arr)[0] & ":" & $arr.len & ":" &
+                           parts.join(","))
+  of "MakeDeepList":
+    return chainValue(args[0].getInt32)
+  of "DepthOf":
+    var depth = 0'i32
+    var current = args[0]
+    while current.kind == rvClass:
+      inc depth
+      current = nextOf(current)
+    return toRemotingValue(depth)
   else:
     # Unknown method: reply void
     return nullValue()

@@ -54,6 +54,8 @@ require mono
 require mcs
 require nim
 
+ulimit -s 65536 2>/dev/null || true
+
 echo "=== Building .NET projects with mcs ==="
 mkdir -p "$OUT_DIR"
 mcs -target:library -out:"$OUT_DIR/Lib.dll" "$DOTNET_DIR/Lib/IEchoService.cs"
@@ -63,8 +65,8 @@ mcs -target:exe -out:"$OUT_DIR/Client.exe" \
   -r:System.Runtime.Remoting.dll -r:"$OUT_DIR/Lib.dll" "$DOTNET_DIR/Client/Program.cs"
 
 echo "=== Building Nim binaries ==="
-nim c --hints:off -o:"$NIM_DIR/client" "$NIM_DIR/client.nim"
-nim c --hints:off -o:"$NIM_DIR/server" "$NIM_DIR/server.nim"
+nim c --hints:off -d:nimCallDepthLimit=30000 -o:"$NIM_DIR/client" "$NIM_DIR/client.nim"
+nim c --hints:off -d:nimCallDepthLimit=30000 -o:"$NIM_DIR/server" "$NIM_DIR/server.nim"
 
 failures=0
 
