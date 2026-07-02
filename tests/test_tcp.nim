@@ -1,5 +1,5 @@
 import unittest
-import asyncnet, asyncdispatch, options
+import asyncnet, asyncdispatch, options, strutils
 import faststreams/outputs
 import DotNimRemoting/tcp/[client, server, types, helpers, common]
 import DotNimRemoting/msnrbf/helpers as msnrbf_helpers
@@ -92,6 +92,42 @@ suite "NRTP TCP Server Tests":
     # A closed client must get a fresh socket on the next call
     let second = waitFor cl.callMethod("Ping", "MyServer")
     check second.stringVal.value == "pong"
+    waitFor cl.close()
+    waitFor srv.stop()
+
+  test "Service handler exceptions travel as remote exceptions":
+    const port = 18394
+    let srv = newNrtpTcpServer(port)
+    proc failing(methodName: string, args: seq[RemotingValue]): Future[RemotingValue] {.async.} =
+      if methodName == "Custom":
+        raise (ref RemoteException)(msg: "custom boom",
+                                    className: "System.InvalidOperationException")
+      raise newException(ValueError, "plain boom")
+    srv.registerService("/test", failing)
+    asyncCheck srv.start()
+
+    let cl = newNrtpTcpClient("tcp://127.0.0.1:" & $port & "/test")
+    # A plain Nim exception surfaces as System.Exception. waitFor appends
+    # the local async traceback to msg in debug builds, so compare the prefix
+    try:
+      discard waitFor cl.call("Fail", "Type.Server")
+      check false
+    except RemoteException as e:
+      check e.msg.startsWith("plain boom")
+      check e.className == "System.Exception"
+    # Raising RemoteException picks the .NET exception class name
+    try:
+      discard waitFor cl.call("Custom", "Type.Server")
+      check false
+    except RemoteException as e:
+      check e.msg.startsWith("custom boom")
+      check e.className == "System.InvalidOperationException"
+    # An exception reply is a normal reply: the connection must stay usable
+    try:
+      discard waitFor cl.call("Fail", "Type.Server")
+      check false
+    except RemoteException:
+      discard
     waitFor cl.close()
     waitFor srv.stop()
 

@@ -81,6 +81,19 @@ proc createMethodReturnResponse*(value: RemotingValue,
                                libraries = requiredLibraries(callArray, libraries))
   serializeRemotingMessage(msg, ctx)
 
+proc createMethodReturnExceptionResponse*(exception: RemotingValue): seq[byte] =
+  ## Method return response carrying a serialized exception (built with
+  ## dotNetExceptionValue) in the call array; .NET clients deserialize and
+  ## rethrow it. Flags match what .NET/Mono emit on a throwing method.
+  let ret = BinaryMethodReturn(
+    recordType: rtMethodReturn,
+    messageEnum: {MessageFlag.NoArgs, MessageFlag.NoContext,
+                  MessageFlag.NoReturnValue, MessageFlag.ExceptionInArray})
+  let ctx = newSerializationContext()
+  let msg = newRemotingMessage(ctx, methodReturn = some(ret),
+                               callArray = @[exception])
+  serializeRemotingMessage(msg, ctx)
+
 proc createMethodCallRequest*(methodName, typeName: string, args: seq[PrimitiveValue] = @[]): seq[byte] =
   ## Method call request with inline primitive arguments
   serializeRemotingMessage(createMethodCallMessage(methodName, qualifiedTypeName(typeName), args))

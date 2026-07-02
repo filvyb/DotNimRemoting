@@ -6,12 +6,12 @@ jobs:
   integration-mono:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install Nim
       uses: jiro4989/setup-nim-action@v2.3.0
       with:
-        nim-version: '2.2.0'
+        nim-version: '2.2.10'
 
     - name: Install Mono
       run: |
@@ -32,6 +32,6 @@ jobs:
         path: |
           ~/.nimble
           ${{ github.workspace }}/nimcache
-        key: ${{ runner.os }}-mono-nim-2.2.0-v1
+        key: ${{ runner.os }}-mono-nim-2.2.10-v1
         restore-keys: |
           ${{ runner.os }}-mono-nim-

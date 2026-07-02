@@ -210,6 +210,23 @@ namespace Client
             if (!coworkersOk) failures++;
             if (coworkersOk) Check("MakeCoworkers identity", ReferenceEquals(coworkers[0].Home, coworkers[1].Home), true);
 
+            // The Nim handler raises; the reply must carry a serialized
+            // System.Exception that deserializes and rethrows here
+            try
+            {
+                service.ThrowError("boom from .NET");
+                Console.WriteLine("ThrowError -> no exception (FAIL)");
+                failures++;
+            }
+            catch (Exception e)
+            {
+                bool exOk = e.Message.Contains("boom from .NET");
+                Console.WriteLine("ThrowError -> " + e.GetType().Name + ": " + e.Message + (exOk ? " (PASS)" : " (FAIL)"));
+                if (!exOk) failures++;
+            }
+            // An exception reply is a normal reply: the channel must stay usable
+            Check("Echo(after exception)", service.Echo("still alive"), "still alive");
+
             if (failures > 0)
             {
                 Console.WriteLine(failures + " call(s) failed.");

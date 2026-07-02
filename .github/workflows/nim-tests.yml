@@ -16,12 +16,12 @@ jobs:
       fail-fast: false
     
     runs-on: >-
-      ${{ (matrix.os == 'macos-latest' && matrix.arch == 'arm64') && 'macos-14'
+      ${{ (matrix.os == 'macos-latest' && matrix.arch == 'arm64') && 'macos-15-intel'
        || (matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64') && 'ubuntu-24.04-arm'
        || matrix.os }}
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     # setup-nim-action supports x64 and arm64 on all platforms
     - name: Install Nim

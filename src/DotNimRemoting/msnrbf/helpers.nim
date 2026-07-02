@@ -678,6 +678,54 @@ proc systemClassValue*(className: string,
     members: values
   ))
 
+proc dotNetExceptionValue*(message: string,
+                           className = "System.Exception"): RemotingValue =
+  ## Serialized .NET exception with the member layout Exception.GetObjectData
+  ## writes, so a .NET client deserializes and rethrows it. className picks
+  ## the exception type; it must be an mscorlib type whose serialized form
+  ## adds no members beyond System.Exception's.
+  let names = @["ClassName", "Message", "Data", "InnerException", "HelpURL",
+                "StackTraceString", "RemoteStackTraceString", "RemoteStackIndex",
+                "ExceptionMethod", "HResult", "Source"]
+  # Member typing mirrors what .NET/Mono emit for a thrown exception
+  let typeInfo = MemberTypeInfo(
+    binaryTypes: @[btString, btString, btSystemClass, btSystemClass, btString,
+                   btString, btString, btPrimitive, btObject, btPrimitive,
+                   btString],
+    additionalInfos: @[
+      AdditionalTypeInfo(kind: btString),
+      AdditionalTypeInfo(kind: btString),
+      AdditionalTypeInfo(kind: btSystemClass,
+        className: LengthPrefixedString(value: "System.Collections.IDictionary")),
+      AdditionalTypeInfo(kind: btSystemClass,
+        className: LengthPrefixedString(value: "System.Exception")),
+      AdditionalTypeInfo(kind: btString),
+      AdditionalTypeInfo(kind: btString),
+      AdditionalTypeInfo(kind: btString),
+      AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+      AdditionalTypeInfo(kind: btObject),
+      AdditionalTypeInfo(kind: btPrimitive, primitiveType: ptInt32),
+      AdditionalTypeInfo(kind: btString)])
+  let record = SystemClassWithMembersAndTypes(
+    recordType: rtSystemClassWithMembersAndTypes,
+    classInfo: classInfo(name = className, memberNames = names),
+    memberTypeInfo: typeInfo)
+  RemotingValue(kind: rvClass, classVal: ClassValue(
+    record: ClassRecord(kind: rtSystemClassWithMembersAndTypes,
+                        systemClassWithMembersAndTypes: record),
+    members: @[
+      toRemotingValue(className),       # ClassName
+      toRemotingValue(message),         # Message
+      nullValue(),                      # Data
+      nullValue(),                      # InnerException
+      nullValue(),                      # HelpURL
+      nullValue(),                      # StackTraceString
+      nullValue(),                      # RemoteStackTraceString
+      toRemotingValue(0'i32),           # RemoteStackIndex
+      nullValue(),                      # ExceptionMethod
+      toRemotingValue(0x80131500'i32),  # HResult: COR_E_EXCEPTION
+      nullValue()]))                    # Source
+
 proc objectToClass*[T: object](obj: T, className: string = "", libraryId: int32 = 0): RemotingValue =
   ## Converts a Nim object to a class value; fields must be convertible with
   ## toRemotingValue. For nested class-typed fields, define a toRemotingValue

@@ -38,19 +38,38 @@ proc registerHandler*(server: NrtpTcpServer, path: string, handler: RequestHandl
   ## itself; most services are easier to write with registerService
   server.handlers[path] = handler
 
+proc originalMsg(e: ref Exception): string =
+  when not defined(release):
+    const header = "\nAsync traceback:\n"
+    let idx = e.msg.find(header)
+    if idx >= 0: e.msg[0 ..< idx] else: e.msg
+  else:
+    e.msg
+
 proc registerService*(server: NrtpTcpServer, path: string, service: ServiceHandler,
                       libraries: seq[BinaryLibrary] = @[]) =
   ## Registers a method-level service: requests are parsed for the handler
   ## and its result is serialized back with the right wire layout. libraries
   ## lists the binaryLibrary records class-valued results may reference.
+  ## A raised exception travels back as a serialized System.Exception the
+  ## client rethrows; raise RemoteException to pick the .NET exception class.
   proc wrapper(requestUri, methodName, typeName: string,
                requestData: seq[byte]): Future[seq[byte]] {.async.} =
     var input = memoryInput(requestData)
     let msg = readRemotingMessage(input)
     if msg.methodCall.isNone:
       return createMethodReturnResponse()
-    let ret = await service(methodNameOf(msg), callArgs(msg))
-    return createMethodReturnResponse(ret, libraries)
+    try:
+      let ret = await service(methodNameOf(msg), callArgs(msg))
+      return createMethodReturnResponse(ret, libraries)
+    except RemoteException as e:
+      # The handler picked the .NET exception type to surface
+      let className = if e.className.len > 0: e.className else: "System.Exception"
+      return createMethodReturnExceptionResponse(
+        dotNetExceptionValue(originalMsg(e), className))
+    except CatchableError as e:
+      # Any other handler failure travels as a plain System.Exception
+      return createMethodReturnExceptionResponse(dotNetExceptionValue(originalMsg(e)))
   server.registerHandler(path, wrapper)
 
 proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =

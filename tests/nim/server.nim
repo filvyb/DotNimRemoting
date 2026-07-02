@@ -102,6 +102,10 @@ proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingV
   of "DescribeEmployee":
     let e = classToObject[Employee](args[0])
     return toRemotingValue(e.Name & "@" & e.Home.City)
+  of "ThrowError":
+    # registerService serializes raised exceptions as System.Exception
+    # returns, which the .NET client materializes and rethrows
+    raise newException(ValueError, args[0].getString)
   else:
     # Unknown method: reply void
     return nullValue()
