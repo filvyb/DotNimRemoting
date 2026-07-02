@@ -183,6 +183,33 @@ namespace Client
                 Home = new Address { Street = "Side 9", City = "Praha" }
             }), "Grace@Praha");
 
+            // Diamond graph: array -> two Employees -> one shared Address.
+            // The Nim server must resolve the member-level MemberReference to
+            // a single instance...
+            Address sharedHome = new Address { Street = "Diamond 7", City = "Ostrava" };
+            Check("HomesShared(diamond)", service.HomesShared(new Employee[]
+            {
+                new Employee { Name = "Hana", Home = sharedHome },
+                new Employee { Name = "Ivan", Home = sharedHome }
+            }), true);
+            // ...but equal-valued distinct Addresses must stay two objects
+            Check("HomesShared(distinct)", service.HomesShared(new Employee[]
+            {
+                new Employee { Name = "Hana", Home = new Address { Street = "Diamond 7", City = "Ostrava" } },
+                new Employee { Name = "Ivan", Home = new Address { Street = "Diamond 7", City = "Ostrava" } }
+            }), false);
+
+            // The Nim server builds the diamond; .NET must materialize one
+            // shared Address instance behind both Home members
+            Employee[] coworkers = service.MakeCoworkers("Jana", "Karel", "Plzen");
+            bool coworkersOk = coworkers != null && coworkers.Length == 2
+                && coworkers[0].Name == "Jana" && coworkers[1].Name == "Karel"
+                && coworkers[0].Home != null && coworkers[0].Home.Street == "Shared 1"
+                && coworkers[0].Home.City == "Plzen";
+            Console.WriteLine("MakeCoworkers -> " + (coworkersOk ? "Jana&Karel@Plzen (PASS)" : "wrong content (FAIL)"));
+            if (!coworkersOk) failures++;
+            if (coworkersOk) Check("MakeCoworkers identity", ReferenceEquals(coworkers[0].Home, coworkers[1].Home), true);
+
             if (failures > 0)
             {
                 Console.WriteLine(failures + " call(s) failed.");

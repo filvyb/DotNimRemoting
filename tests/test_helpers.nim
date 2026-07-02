@@ -263,7 +263,7 @@ suite "MSNRBF Helpers":
     
     # Verify member values
     check(remoteValue.classVal.members[0].kind == rvString)
-    check(remoteValue.classVal.members[0].stringVal.value == "John Doe")
+    check(remoteValue.classVal.members[0].stringRecord.value.value == "John Doe")
     
     check(remoteValue.classVal.members[1].kind == rvPrimitive)
     check(remoteValue.classVal.members[1].primitiveVal.int32Val == 30)

@@ -420,7 +420,7 @@ proc isNull*(value: RemotingValue): bool =
 
 proc getString*(value: RemotingValue): string =
   expectKind(value, rvString)
-  value.stringVal.value
+  value.stringRecord.value.value
 
 proc getBool*(value: RemotingValue): bool = expectPrimitive(value, ptBoolean).boolVal
 proc getByte*(value: RemotingValue): uint8 = expectPrimitive(value, ptByte).byteVal
@@ -534,12 +534,13 @@ proc toRemotingValue*(value: RemotingValue): RemotingValue =
 proc toRemotingValue*(value: PrimitiveValue): RemotingValue =
   ## Strings map to rvString and nulls to rvNull, matching parsed values
   case value.kind
-  of ptString: RemotingValue(kind: rvString, stringVal: value.stringVal)
+  of ptString: RemotingValue(kind: rvString,
+                             stringRecord: binaryObjectString(value.stringVal.value))
   of ptNull: RemotingValue(kind: rvNull)
   else: RemotingValue(kind: rvPrimitive, primitiveVal: value)
 
 proc toRemotingValue*(value: string): RemotingValue =
-  RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: value))
+  RemotingValue(kind: rvString, stringRecord: binaryObjectString(value))
 
 proc toRemotingValue*(value: bool): RemotingValue = toRemotingValue(boolValue(value))
 proc toRemotingValue*(value: int8): RemotingValue = toRemotingValue(sbyteValue(value))
@@ -822,6 +823,12 @@ proc resolveReferences*(msg: RemotingMessage) =
     if value == nil:
       return
     case value.kind
+    of rvString:
+      # .NET interns string literals, so repeats travel as MemberReferences
+      # to the first BinaryObjectString record
+      let id = objectIdOf(value)
+      if id != 0:
+        byId[id] = value
     of rvClass:
       if indexed.containsOrIncl(cast[pointer](value.classVal)):
         return
@@ -905,7 +912,7 @@ proc raiseRemoteException(msg: RemotingMessage) =
       try:
         let m = getMember(exc, "Message")
         if m.kind == rvString:
-          excMessage = m.stringVal.value
+          excMessage = m.getString
       except CatchableError:
         discard
   raise (ref RemoteException)(msg: excMessage, className: excClassName)

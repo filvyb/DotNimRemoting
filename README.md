@@ -101,8 +101,8 @@ exception type in `className` and its message in `msg`.
 
 For full-control scenarios (custom records, manual wire layout), the protocol
 layers remain available under `DotNimRemoting/tcp/*` and
-`DotNimRemoting/msnrbf/*` — see `registerHandler`, `invoke` and the
-`msnrbf/records` modules.
+`DotNimRemoting/msnrbf/*` (see `registerHandler`, `invoke` and the
+`msnrbf/records` modules).
 
 ### Additional examples
 
@@ -203,14 +203,14 @@ Starts/stops the server.
 
 ### Working with values
 
-- `toRemotingValue(x)` — converts Nim bools, ints, floats, strings and seqs
+- `toRemotingValue(x)` - converts Nim bools, ints, floats, strings and seqs
   of them to `RemotingValue`s; `nullValue()` is the .NET null.
 - `classValue(name, libraryId, members)`, `systemClassValue`,
-  `classArrayValue`, `objectArrayValue` — build class instances and arrays.
-- `objectToClass(obj)` / `classToObject[T](rv)` — convert between plain Nim
+  `classArrayValue`, `objectArrayValue` - build class instances and arrays.
+- `objectToClass(obj)` / `classToObject[T](rv)` - convert between plain Nim
   objects and class values by field name.
-- `binaryLibrary(name, id)` — the assembly record class values reference.
-- `getString`, `getInt32`, `getDouble`, … — typed accessors that raise
+- `binaryLibrary(name, id)` - the assembly record class values reference.
+- `getString`, `getInt32`, `getDouble`, … - typed accessors that raise
   `ValueError` on kind mismatches; `rv[i]`/`rv.elements` index arrays,
   `rv["Member"]`/`rv.getMember` look up class members, `rv.className` and
   `rv.isNull` inspect the value.

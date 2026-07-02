@@ -119,7 +119,7 @@ suite "Method call argument extraction":
       RemotingValue(kind: rvPrimitive,
         primitiveVal: dateTimeValue(637_500_000_000_000_000'i64, 1)),
       RemotingValue(kind: rvString,
-        stringVal: LengthPrefixedString(value: "hi"))]
+        stringRecord: binaryObjectString("hi"))]
     let ctx = newSerializationContext()
     let msg = newRemotingMessage(ctx, methodCall = some(call), callArray = callArray)
     let args = extractMethodCallArgs(deserializeRemotingMessage(serializeRemotingMessage(msg)))

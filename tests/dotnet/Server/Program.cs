@@ -59,6 +59,17 @@ namespace Server
         }
         public Employee EchoEmployee(Employee employee) => employee;
         public string DescribeEmployee(Employee employee) => employee.Name + "@" + employee.Home.City;
+        public bool HomesShared(Employee[] employees) =>
+            ReferenceEquals(employees[0].Home, employees[1].Home);
+        public Employee[] MakeCoworkers(string name1, string name2, string city)
+        {
+            Address home = new Address { Street = "Shared 1", City = city };
+            return new Employee[]
+            {
+                new Employee { Name = name1, Home = home },
+                new Employee { Name = name2, Home = home }
+            };
+        }
         public void ThrowError(string message) => throw new Exception(message);
     }
 

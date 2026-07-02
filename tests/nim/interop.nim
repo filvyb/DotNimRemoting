@@ -45,3 +45,17 @@ proc toRemotingValue*(e: Employee): RemotingValue =
 proc personArrayValue*(people: seq[RemotingValue]): RemotingValue =
   ## Person[] as a typed class array, so .NET materializes a typed array
   classArrayValue(PersonClassName, PersonLibraryId, people)
+
+const EmployeeLayout* = @["Name", "Home"]
+  ## Member layout fallback for Employee values arriving as ClassWithId
+
+proc employeeValue*(name: string, home: RemotingValue): RemotingValue =
+  ## Employee whose Home member is passed as a RemotingValue, so callers can
+  ## share one Address instance between employees (diamond graphs); the
+  ## writer dedupes by ref, emitting a MemberReference for repeats
+  classValue(EmployeeClassName, PersonLibraryId,
+    {"Name": toRemotingValue(name), "Home": home})
+
+proc employeeArrayValue*(employees: seq[RemotingValue]): RemotingValue =
+  ## Employee[] as a typed class array
+  classArrayValue(EmployeeClassName, PersonLibraryId, employees)

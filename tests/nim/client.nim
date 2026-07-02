@@ -332,6 +332,41 @@ proc main() {.async.} =
     echo "DescribeEmployee -> ", r.getString
     doAssert r.getString == "Grace@Praha"
 
+  block homesShared:
+    # Diamond graph: array -> two Employees -> one shared Address value. The
+    # writer must emit the Address once plus a MemberReference, and .NET must
+    # answer ReferenceEquals = true on the materialized graph
+    let home = toRemotingValue(Address(Street: "Diamond 7", City: "Ostrava"))
+    let r = await client.call("HomesShared", typename,
+      @[employeeArrayValue(@[employeeValue("Hana", home), employeeValue("Ivan", home)])],
+      @[personLibrary()])
+    echo "HomesShared(diamond) -> ", r.getBool
+    doAssert r.getBool == true, "HomesShared(diamond): expected shared instance"
+
+  block homesSharedDistinct:
+    # Control: equal-valued but distinct Address values must stay two objects
+    let r = await client.call("HomesShared", typename,
+      @[employeeArrayValue(@[
+        employeeValue("Hana", toRemotingValue(Address(Street: "Diamond 7", City: "Ostrava"))),
+        employeeValue("Ivan", toRemotingValue(Address(Street: "Diamond 7", City: "Ostrava")))])],
+      @[personLibrary()])
+    echo "HomesShared(distinct) -> ", r.getBool
+    doAssert r.getBool == false, "HomesShared(distinct): expected distinct instances"
+
+  block makeCoworkers:
+    # The server returns the diamond: the second Home arrives as a
+    # MemberReference and must resolve to the same instance
+    let r = await client.call("MakeCoworkers", typename, "Jana", "Karel", "Plzen")
+    doAssert r.kind == rvArray, "MakeCoworkers: expected array, got " & $r.kind
+    doAssert r.len == 2
+    let e0 = classToObject[Employee](r[0])
+    let e1 = classToObject[Employee](r[1])
+    echo "MakeCoworkers -> ", e0.Name, "&", e1.Name, "@", e0.Home.City
+    doAssert e0 == Employee(Name: "Jana", Home: Address(Street: "Shared 1", City: "Plzen"))
+    doAssert e1 == Employee(Name: "Karel", Home: Address(Street: "Shared 1", City: "Plzen"))
+    doAssert getMember(r[0], "Home", EmployeeLayout) == getMember(r[1], "Home", EmployeeLayout),
+      "MakeCoworkers: expected both Home members to resolve to one instance"
+
   block throwError:
     # The server throws; call surfaces the serialized exception as RemoteException
     var caught = false

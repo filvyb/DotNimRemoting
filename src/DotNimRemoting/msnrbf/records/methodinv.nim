@@ -47,7 +47,7 @@ type
     of rvPrimitive:
       primitiveVal*: PrimitiveValue
     of rvString:
-      stringVal*: LengthPrefixedString
+      stringRecord*: BinaryObjectString
     of rvNull:
       discard
     of rvReference:
@@ -312,7 +312,7 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
     result = RemotingValue(kind: rvPrimitive, primitiveVal: primTyped.value)
   of rtBinaryObjectString:
     let strRecord = readBinaryObjectString(inp)
-    result = RemotingValue(kind: rvString, stringVal: strRecord.value)
+    result = RemotingValue(kind: rvString, stringRecord: strRecord)
   of rtObjectNull:
     discard readObjectNull(inp)
     result = RemotingValue(kind: rvNull)
@@ -620,12 +620,11 @@ proc writeRemotingValue(outp: OutputStream, value: RemotingValue,
       ))
     else:
       let id = assignIdForPointer(ctx, valuePtr)
-      
-      let strRecord = BinaryObjectString(
-        recordType: rtBinaryObjectString,
-        objectId: id,
-        value: value.stringVal
-      )
+
+      # Ids are reassigned on write, so overwrite whatever the record carried
+      var strRecord = value.stringRecord
+      strRecord.recordType = rtBinaryObjectString
+      strRecord.objectId = id
       writeBinaryObjectString(outp, strRecord)
   of rvNull:
     writeObjectNull(outp, ObjectNull(recordType: rtObjectNull))
@@ -859,9 +858,10 @@ proc writeRemotingValue*(outp: OutputStream, value: RemotingValue, ctx: Serializ
     inc i
 
 proc objectIdOf*(value: RemotingValue): int32 =
-  ## Object id of a class/array record; 0 for kinds that don't keep one
-  ## (primitives, nulls, references, strings)
+  ## Object id of a class/array/string record; 0 for kinds that don't keep
+  ## one (primitives, nulls, references)
   case value.kind
+  of rvString: value.stringRecord.objectId
   of rvClass:
     let rec = value.classVal.record
     case rec.kind
@@ -932,7 +932,7 @@ proc `$`*(remVal: RemotingValue): string =
   ## Convert a RemotingValue to string representation
   case remVal.kind
   of rvPrimitive: $remVal.primitiveVal
-  of rvString: "\"" & remVal.stringVal.value & "\""
+  of rvString: "\"" & remVal.stringRecord.value.value & "\""
   of rvNull: "null"
   of rvReference: "Reference(id=" & $remVal.idRef & ")"
   of rvClass:

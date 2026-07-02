@@ -247,7 +247,7 @@ suite "Class Records Tests":
       record: ClassRecord(kind: rtSystemClassWithMembersAndTypes,
                           systemClassWithMembersAndTypes: cls),
       members: @[RemotingValue(kind: rvString,
-                 stringVal: LengthPrefixedString(value: "hello"))]
+                 stringRecord: binaryObjectString("hello"))]
     ))
 
     let ctx = newSerializationContext()
@@ -279,7 +279,7 @@ suite "Class Records Tests":
     check decoded.kind == rvClass
     check decoded.classVal.members.len == 1
     check decoded.classVal.members[0].kind == rvString
-    check decoded.classVal.members[0].stringVal.value == "hello"
+    check decoded.classVal.members[0].stringRecord.value.value == "hello"
 
   test "String members round-trip in ClassWithMembersAndTypes":
     let cls = classWithMembersAndTypes("MyLib.Person", 3,
@@ -289,7 +289,7 @@ suite "Class Records Tests":
       record: ClassRecord(kind: rtClassWithMembersAndTypes,
                           classWithMembersAndTypes: cls),
       members: @[
-        RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "John")),
+        RemotingValue(kind: rvString, stringRecord: binaryObjectString("John")),
         RemotingValue(kind: rvPrimitive, primitiveVal: int32Value(30))
       ]
     ))
@@ -304,7 +304,7 @@ suite "Class Records Tests":
     check decoded.kind == rvClass
     check decoded.classVal.members.len == 2
     check decoded.classVal.members[0].kind == rvString
-    check decoded.classVal.members[0].stringVal.value == "John"
+    check decoded.classVal.members[0].stringRecord.value.value == "John"
     check decoded.classVal.members[1].kind == rvPrimitive
     check decoded.classVal.members[1].primitiveVal.int32Val == 30
 
@@ -1052,7 +1052,7 @@ suite "BinaryLibrary in RemotingMessage Tests":
           kind: rtClassWithMembersAndTypes,
           classWithMembersAndTypes: classRecord
         ),
-        members: @[RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "test_field_value"))]
+        members: @[RemotingValue(kind: rvString, stringRecord: binaryObjectString("test_field_value"))]
       )
     )
     
@@ -1073,7 +1073,7 @@ suite "BinaryLibrary in RemotingMessage Tests":
       classVal: ClassValue(
         record: msg.referencedRecords[0].classVal.record,
         members: @[
-          RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "test value"))
+          RemotingValue(kind: rvString, stringRecord: binaryObjectString("test value"))
         ]
       )
     )
@@ -1162,8 +1162,8 @@ suite "SerializationContext Tests":
     let ctx = newSerializationContext()
     
     # Create two different RemotingValue objects
-    let val1 = RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "String 1"))
-    let val2 = RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "String 2"))
+    let val1 = RemotingValue(kind: rvString, stringRecord: binaryObjectString("String 1"))
+    let val2 = RemotingValue(kind: rvString, stringRecord: binaryObjectString("String 2"))
     
     let id1 = ctx.assignIdForPointer(cast[pointer](val1))
     let id2 = ctx.assignIdForPointer(cast[pointer](val2))
@@ -1240,7 +1240,7 @@ suite "SerializationContext Tests":
     # Test string value
     let strValue = RemotingValue(
       kind: rvString,
-      stringVal: LengthPrefixedString(value: "Hello, World!")
+      stringRecord: binaryObjectString("Hello, World!")
     )
 
     var outStream = memoryOutput()
@@ -1252,7 +1252,7 @@ suite "SerializationContext Tests":
     let decoded = readRemotingValue(inStream, newReferenceContext())
 
     check decoded.kind == rvString
-    check decoded.stringVal.value == "Hello, World!"
+    check decoded.stringRecord.value.value == "Hello, World!"
 
   test "RemotingValue null serialization and deserialization":
     # Test null value
@@ -1367,7 +1367,7 @@ suite "SerializationContext Tests":
           ),
           RemotingValue(
             kind: rvString,
-            stringVal: LengthPrefixedString(value:"Test String")
+            stringRecord: binaryObjectString("Test String")
           ),
           RemotingValue(kind: rvNull)
         ]
@@ -1392,7 +1392,7 @@ suite "SerializationContext Tests":
     check decoded.arrayVal.elements[0].primitiveVal.kind == ptInt32
     check decoded.arrayVal.elements[0].primitiveVal.int32Val == 42
     check decoded.arrayVal.elements[1].kind == rvString
-    check decoded.arrayVal.elements[1].stringVal.value == "Test String"
+    check decoded.arrayVal.elements[1].stringRecord.value.value == "Test String"
     check decoded.arrayVal.elements[2].kind == rvNull
 
   test "RemotingValue handling of ObjectNullMultiple":
@@ -1491,7 +1491,7 @@ suite "SerializationContext Tests":
         elements: @[
           RemotingValue(
             kind: rvString,
-            stringVal: LengthPrefixedString(value:"Array Item 1")
+            stringRecord: binaryObjectString("Array Item 1")
           ),
           RemotingValue(
             kind: rvArray,
@@ -1556,7 +1556,7 @@ suite "SerializationContext Tests":
     check argsArray.kind == rvArray
     check argsArray.arrayVal.elements.len == 2
     check argsArray.arrayVal.elements[0].kind == rvString
-    check argsArray.arrayVal.elements[0].stringVal.value == "Array Item 1"
+    check argsArray.arrayVal.elements[0].stringRecord.value.value == "Array Item 1"
 
     # The nested array is likewise deferred and reached through a reference
     check argsArray.arrayVal.elements[1].kind == rvReference
@@ -1607,7 +1607,7 @@ suite "SerializationContext Tests":
           ),
           RemotingValue(
             kind: rvString,
-            stringVal: LengthPrefixedString(value: "Member String Value")
+            stringRecord: binaryObjectString("Member String Value")
           )
         ]
       )
@@ -1635,7 +1635,7 @@ suite "SerializationContext Tests":
     check decoded.classVal.members[0].primitiveVal.int32Val == 42
     
     check decoded.classVal.members[1].kind == rvString
-    check decoded.classVal.members[1].stringVal.value == "Member String Value"
+    check decoded.classVal.members[1].stringRecord.value.value == "Member String Value"
 
 suite "ClassWithId Tests":
   # Section 2.3.2.5: ClassWithId carries no metadata of its own; MetadataId
@@ -1671,7 +1671,7 @@ suite "ClassWithId Tests":
         ),
         members: @[
           RemotingValue(kind: rvPrimitive, primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: intVal)),
-          RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: strVal))
+          RemotingValue(kind: rvString, stringRecord: binaryObjectString(strVal))
         ]
       )
     )
@@ -1700,7 +1700,7 @@ suite "ClassWithId Tests":
     check second.classVal.members[0].kind == rvPrimitive
     check second.classVal.members[0].primitiveVal.int32Val == 99
     check second.classVal.members[1].kind == rvString
-    check second.classVal.members[1].stringVal.value == "second"
+    check second.classVal.members[1].stringRecord.value.value == "second"
 
   test "ClassWithId inside an object array is read correctly":
     # Repeated class instances in an array: full metadata record for the first
@@ -1727,7 +1727,7 @@ suite "ClassWithId Tests":
     check decoded.arrayVal.elements[1].classVal.record.kind == rtClassWithId
     check decoded.arrayVal.elements[1].classVal.members.len == 2
     check decoded.arrayVal.elements[1].classVal.members[0].primitiveVal.int32Val == 7
-    check decoded.arrayVal.elements[1].classVal.members[1].stringVal.value == "second"
+    check decoded.arrayVal.elements[1].classVal.members[1].stringRecord.value.value == "second"
 
   test "ClassWithId round-trips through writeRemotingValue with remapped MetadataId":
     let metadataValue = makeClassValue(7, 42, "first")
@@ -1740,7 +1740,7 @@ suite "ClassWithId Tests":
         ),
         members: @[
           RemotingValue(kind: rvPrimitive, primitiveVal: PrimitiveValue(kind: ptInt32, int32Val: 1337)),
-          RemotingValue(kind: rvString, stringVal: LengthPrefixedString(value: "second"))
+          RemotingValue(kind: rvString, stringRecord: binaryObjectString("second"))
         ]
       )
     )
@@ -1762,7 +1762,7 @@ suite "ClassWithId Tests":
       first.classVal.record.classWithMembersAndTypes.classInfo.objectId
     check second.classVal.members.len == 2
     check second.classVal.members[0].primitiveVal.int32Val == 1337
-    check second.classVal.members[1].stringVal.value == "second"
+    check second.classVal.members[1].stringRecord.value.value == "second"
 
   test "ClassWithId referencing unknown metadata fails":
     # Read side: the referenced record must appear earlier in the stream
@@ -1830,7 +1830,7 @@ suite "Member position grammar regressions":
     check value.classVal.members[1].kind == rvNull
     check value.classVal.members[2].kind == rvNull
     check value.classVal.members[3].kind == rvString
-    check value.classVal.members[3].stringVal.value == "tail"
+    check value.classVal.members[3].stringRecord.value.value == "tail"
 
   test "Null record count exceeding remaining class members fails":
     var outStream = memoryOutput()

@@ -95,6 +95,12 @@ namespace DotNimTester.Lib
         Employee EchoEmployee(Employee employee);
         // nested class arg -> string return
         string DescribeEmployee(Employee employee);
+        // diamond graph arg: array -> two Employees -> one shared Address;
+        // true when both Home members deserialize to the same instance
+        bool HomesShared(Employee[] employees);
+        // diamond graph return: both Employees' Home is one Address instance,
+        // so the second Home travels as a MemberReference
+        Employee[] MakeCoworkers(string name1, string name2, string city);
         // always throws; the return message carries the exception
         void ThrowError(string message);
     }

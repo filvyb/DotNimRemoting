@@ -186,6 +186,36 @@ suite "Wire layout and round trips":
     check r[1].kind == rvClass
     check r[1]["Name"].getString == "Gemini"
 
+  test "diamond graphs keep one shared member instance":
+    # Two employees share one Address value: the wire carries the Address
+    # once plus a MemberReference, and resolution restores the sharing
+    let lib = binaryLibrary("Asm", 100)
+    let home = classValue("Ns.Address", 100, {"City": toRemotingValue("Brno")})
+    let e1 = classValue("Ns.Employee", 100,
+      {"Name": toRemotingValue("Hana"), "Home": home})
+    let e2 = classValue("Ns.Employee", 100,
+      {"Name": toRemotingValue("Ivan"), "Home": home})
+    let data = createMethodReturnResponse(
+      classArrayValue("Ns.Employee", 100, @[e1, e2]), libraries = @[lib])
+    let msg = deserializeRemotingMessage(data)
+    let r = returnValueOf(msg)
+    check r.len == 2
+    let h0 = getMember(r[0], "Home", ["Name", "Home"])
+    let h1 = getMember(r[1], "Home", ["Name", "Home"])
+    check h0 == h1  # ref equality: both members resolve to one instance
+    check h0["City"].getString == "Brno"
+
+  test "references to string records resolve":
+    # .NET interns string literals, so a repeated string travels as a
+    # MemberReference to the first BinaryObjectString record
+    let s = toRemotingValue("interned")
+    let msg = deserializeRemotingMessage(
+      createMethodReturnResponse(objectArrayValue(@[s, s])))
+    let r = returnValueOf(msg)
+    check r.len == 2
+    check r[0].getString == "interned"
+    check r[1].getString == "interned"
+
 suite "Remote exceptions":
   test "exception responses raise RemoteException":
     # Build a return message carrying a serialized exception the way .NET does

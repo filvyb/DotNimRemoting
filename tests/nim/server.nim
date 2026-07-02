@@ -84,6 +84,21 @@ proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingV
     return personArrayValue(@[p, p])
   of "EchoEmployee":
     return toRemotingValue(classToObject[Employee](args[0]))
+  of "HomesShared":
+    # Diamond arg: true only when both Home members resolved to the same
+    # RemotingValue (ref equality), i.e. the wire carried one Address record
+    # plus a MemberReference
+    let employees = args[0].elements
+    return toRemotingValue(
+      getMember(employees[0], "Home", EmployeeLayout) ==
+      getMember(employees[1], "Home", EmployeeLayout))
+  of "MakeCoworkers":
+    # Build the diamond: one Address value shared by both employees, so the
+    # writer emits the second Home as a MemberReference
+    let home = toRemotingValue(Address(Street: "Shared 1", City: args[2].getString))
+    return employeeArrayValue(@[
+      employeeValue(args[0].getString, home),
+      employeeValue(args[1].getString, home)])
   of "DescribeEmployee":
     let e = classToObject[Employee](args[0])
     return toRemotingValue(e.Name & "@" & e.Home.City)

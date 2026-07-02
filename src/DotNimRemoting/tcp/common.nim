@@ -20,7 +20,7 @@ proc inlineValueWithCode(value: RemotingValue): ValueWithCode =
   case value.kind
   of rvString:
     ValueWithCode(primitiveType: ptString,
-                  value: PrimitiveValue(kind: ptString, stringVal: value.stringVal))
+                  value: PrimitiveValue(kind: ptString, stringVal: value.stringRecord.value))
   of rvPrimitive:
     toValueWithCode(value.primitiveVal)
   else:
@@ -90,7 +90,7 @@ proc toPrimitiveValue*(rv: RemotingValue): PrimitiveValue =
   ## PrimitiveValue; anything else (class, array, reference) maps to ptNull.
   case rv.kind
   of rvPrimitive: rv.primitiveVal
-  of rvString: PrimitiveValue(kind: ptString, stringVal: rv.stringVal)
+  of rvString: PrimitiveValue(kind: ptString, stringVal: rv.stringRecord.value)
   else: PrimitiveValue(kind: ptNull)
 
 proc extractMethodCallArgs*(msg: RemotingMessage): seq[PrimitiveValue] =

@@ -1,4 +1,4 @@
-## DotNimRemoting — talk to .NET applications over MS-NRTP / MS-NRBF.
+## DotNimRemoting - talk to .NET applications over MS-NRTP / MS-NRBF.
 ##
 ## The only import most applications need: TCP client/server plus the value
 ## helpers. Protocol internals (records, wire framing, serialization

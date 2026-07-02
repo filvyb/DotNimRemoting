@@ -295,7 +295,7 @@ suite "RemotingMessage serialization and deserialization":
   test "method return with exception":
     let exceptionValue = RemotingValue(
       kind: rvString,
-      stringVal: LengthPrefixedString(value: "DivideByZeroException")
+      stringRecord: binaryObjectString("DivideByZeroException")
     )
     let binaryMethodReturn = BinaryMethodReturn(
       recordType: rtMethodReturn,
@@ -318,7 +318,7 @@ suite "RemotingMessage serialization and deserialization":
     check methodReturn.messageEnum == {NoContext, ExceptionInArray}
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
-    check deserialized.methodCallArray[0].stringVal.value == "DivideByZeroException"
+    check deserialized.methodCallArray[0].stringRecord.value.value == "DivideByZeroException"
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with method signature in array":
@@ -332,7 +332,7 @@ suite "RemotingMessage serialization and deserialization":
     )
     let signatureValue = RemotingValue(
       kind: rvString,
-      stringVal: LengthPrefixedString(value: "System.String, System.Int32")
+      stringRecord: binaryObjectString("System.String, System.Int32")
     )
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[signatureValue])
@@ -357,7 +357,7 @@ suite "RemotingMessage serialization and deserialization":
     check methodCall.args.len == 0
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
-    check deserialized.methodCallArray[0].stringVal.value == "System.String, System.Int32"
+    check deserialized.methodCallArray[0].stringRecord.value.value == "System.String, System.Int32"
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method call with generic method":
@@ -371,7 +371,7 @@ suite "RemotingMessage serialization and deserialization":
     )
     let typeArgValue = RemotingValue(
       kind: rvString,
-      stringVal: LengthPrefixedString(value: "System.Int32")
+      stringRecord: binaryObjectString("System.Int32")
     )
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[typeArgValue])
@@ -396,7 +396,7 @@ suite "RemotingMessage serialization and deserialization":
     check methodCall.args.len == 0
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
-    check deserialized.methodCallArray[0].stringVal.value == "System.Int32"
+    check deserialized.methodCallArray[0].stringRecord.value.value == "System.Int32"
     check deserialized.tail.recordType == rtMessageEnd
 
   test "method return with arguments as call array items":
@@ -439,7 +439,7 @@ suite "RemotingMessage serialization and deserialization":
     )
     let propertyValue = RemotingValue(
       kind: rvString,
-      stringVal: LengthPrefixedString(value: "property entry")
+      stringRecord: binaryObjectString("property entry")
     )
     let ctx = newSerializationContext()
     var msg = newRemotingMessage(ctx, methodCall = some(binaryMethodCall), callArray = @[propertyValue])
@@ -454,5 +454,5 @@ suite "RemotingMessage serialization and deserialization":
     check methodCall.messageEnum == {NoArgs, NoContext, PropertyInArray}
     check deserialized.methodCallArray.len == 1
     check deserialized.methodCallArray[0].kind == rvString
-    check deserialized.methodCallArray[0].stringVal.value == "property entry"
+    check deserialized.methodCallArray[0].stringRecord.value.value == "property entry"
     check deserialized.tail.recordType == rtMessageEnd
