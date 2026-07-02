@@ -210,6 +210,45 @@ namespace Client
             if (!coworkersOk) failures++;
             if (coworkersOk) Check("MakeCoworkers identity", ReferenceEquals(coworkers[0].Home, coworkers[1].Home), true);
 
+            // Object-typed round-trips: the value is typed by its runtime
+            // type on the wire, so the Nim side must echo whatever arrives
+            Check("EchoObject(int)", service.EchoObject(42), 42);
+            Check("EchoObject(string)", service.EchoObject("boxed"), "boxed");
+            Check("EchoObject(null)", service.EchoObject(null), null);
+            Person boxedPerson = service.EchoObject(new Person { Name = "Olga", Age = 5, Score = 7.5 }) as Person;
+            CheckPerson("EchoObject(Person)", boxedPerson, "Olga", 5, 7.5);
+
+            // Heterogeneous object[]: ArraySingleObject on the wire; boxed
+            // primitives travel as MemberPrimitiveTyped records alongside
+            // string, null and class elements
+            object[] mixed = service.EchoObjectArray(new object[]
+            {
+                42, "text", null, 2.5, true,
+                new Person { Name = "Pia", Age = 6, Score = 8.5 }
+            });
+            bool mixedOk = mixed != null && mixed.Length == 6
+                && Equals(mixed[0], 42) && Equals(mixed[1], "text") && mixed[2] == null
+                && Equals(mixed[3], 2.5) && Equals(mixed[4], true);
+            Person mixedPerson = mixedOk ? mixed[5] as Person : null;
+            mixedOk = mixedOk && mixedPerson != null && mixedPerson.Name == "Pia"
+                && mixedPerson.Age == 6 && mixedPerson.Score == 8.5;
+            Console.WriteLine("EchoObjectArray -> " + (mixed == null ? "null" : mixed.Length + " elements") + (mixedOk ? " (PASS)" : " (FAIL)"));
+            if (!mixedOk) failures++;
+
+            // One-way call: OneWayRequest on the wire and no reply frame; the
+            // Nim server must run the handler anyway and keep the connection
+            // usable. One-way dispatch is asynchronous, so poll for the side
+            // effect instead of asserting immediately.
+            service.FireAndForget("one-way from .NET");
+            string lastOneWay = null;
+            for (int i = 0; i < 50; i++)
+            {
+                lastOneWay = service.GetLastOneWayMessage();
+                if (lastOneWay == "one-way from .NET") break;
+                System.Threading.Thread.Sleep(100);
+            }
+            Check("FireAndForget(one-way)", lastOneWay, "one-way from .NET");
+
             // The Nim handler raises; the reply must carry a serialized
             // System.Exception that deserializes and rethrows here
             try

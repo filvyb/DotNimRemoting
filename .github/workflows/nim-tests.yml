@@ -9,15 +9,12 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         nim-version: ['2.0.16', '2.2.10']
         arch: [x64, arm64]
-        exclude:
-          # GitHub doesn't provide Windows ARM runners yet
-          - os: windows-latest
-            arch: arm64
       fail-fast: false
-    
+
     runs-on: >-
       ${{ (matrix.os == 'macos-latest' && matrix.arch == 'arm64') && 'macos-15-intel'
        || (matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64') && 'ubuntu-24.04-arm'
+       || (matrix.os == 'windows-latest' && matrix.arch == 'arm64') && 'windows-11-arm'
        || matrix.os }}
 
     steps:

@@ -5,6 +5,19 @@ import interop
 # Direction 2: .NET (Mono) client -> Nim server. Implements the IEchoService
 # contract the .NET client expects through the registerService API.
 
+proc rebuiltObject(value: RemotingValue): RemotingValue =
+  ## Echo helper for object-typed values: class values are rebuilt so the
+  ## reply references our own library record (the parsed record carries the
+  ## client's library id); everything else echoes as-is
+  if value.kind == rvClass:
+    toRemotingValue(classToObject[Person](value))
+  else:
+    value
+
+var lastOneWayMessage = ""
+  ## Set by the one-way FireAndForget handler, read back by
+  ## GetLastOneWayMessage to prove the fire-and-forget call executed
+
 proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingValue] {.async.} =
   case methodName
   of "Echo":
@@ -102,6 +115,20 @@ proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingV
   of "DescribeEmployee":
     let e = classToObject[Employee](args[0])
     return toRemotingValue(e.Name & "@" & e.Home.City)
+  of "FireAndForget":
+    # One-way target: the request arrives as OneWayRequest, so the return
+    # value is discarded and no reply frame is sent
+    lastOneWayMessage = args[0].getString
+    return nullValue()
+  of "GetLastOneWayMessage":
+    return toRemotingValue(lastOneWayMessage)
+  of "EchoObject":
+    return rebuiltObject(args[0])
+  of "EchoObjectArray":
+    var elems: seq[RemotingValue]
+    for elem in args[0].elements:
+      elems.add(rebuiltObject(elem))
+    return objectArrayValue(elems)
   of "ThrowError":
     # registerService serializes raised exceptions as System.Exception
     # returns, which the .NET client materializes and rethrows

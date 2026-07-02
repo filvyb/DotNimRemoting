@@ -101,6 +101,17 @@ namespace DotNimTester.Lib
         // diamond graph return: both Employees' Home is one Address instance,
         // so the second Home travels as a MemberReference
         Employee[] MakeCoworkers(string name1, string name2, string city);
+        // object-typed round-trip; a boxed primitive is typed by its runtime
+        // type on the wire, not by the declared parameter type
+        object EchoObject(object value);
+        // heterogeneous object[] round-trip: ArraySingleObject on the wire,
+        // mixing MemberPrimitiveTyped, string, null and class elements
+        object[] EchoObjectArray(object[] values);
+        // fire-and-forget: OneWayRequest on the wire, no reply frame
+        [System.Runtime.Remoting.Messaging.OneWay]
+        void FireAndForget(string message);
+        // reads back the last one-way payload, proving the call executed
+        string GetLastOneWayMessage();
         // always throws; the return message carries the exception
         void ThrowError(string message);
     }

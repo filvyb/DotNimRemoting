@@ -70,6 +70,15 @@ namespace Server
                 new Employee { Name = name2, Home = home }
             };
         }
+        public object EchoObject(object value) => value;
+        public object[] EchoObjectArray(object[] values) => values;
+        private string lastOneWayMessage = "";
+        // Mono's server-side sink checks OneWay on the resolved method (this
+        // implementation), not the interface: without it a reply frame is
+        // sent, desyncing clients that fired and forgot
+        [System.Runtime.Remoting.Messaging.OneWay]
+        public void FireAndForget(string message) { lastOneWayMessage = message; }
+        public string GetLastOneWayMessage() { return lastOneWayMessage; }
         public void ThrowError(string message) => throw new Exception(message);
     }
 

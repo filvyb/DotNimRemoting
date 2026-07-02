@@ -367,6 +367,67 @@ proc main() {.async.} =
     doAssert getMember(r[0], "Home", EmployeeLayout) == getMember(r[1], "Home", EmployeeLayout),
       "MakeCoworkers: expected both Home members to resolve to one instance"
 
+  block echoObjectInt:
+    # object-typed parameter: the value is typed by its runtime type on the
+    # wire, so a boxed Int32 must round-trip through .NET's object handling
+    let r = await client.call("EchoObject", typename, 42)
+    echo "EchoObject(int) -> ", r.getInt32
+    doAssert r.getInt32 == 42
+
+  block echoObjectString:
+    let r = await client.call("EchoObject", typename, "boxed")
+    echo "EchoObject(string) -> ", r.getString
+    doAssert r.getString == "boxed"
+
+  block echoObjectNull:
+    let r = await client.call("EchoObject", typename, @[nullValue()])
+    echo "EchoObject(null) -> ", r.kind
+    doAssert r.isNull, "EchoObject(null): expected null, got " & $r.kind
+
+  block echoObjectPerson:
+    let sent = Person(Name: "Olga", Age: 5, Score: 7.5)
+    let r = await client.call("EchoObject", typename,
+      @[toRemotingValue(sent)], @[personLibrary()])
+    doAssert r.kind == rvClass, "EchoObject(Person): expected class, got " & $r.kind
+    let p = classToObject[Person](r)
+    echo "EchoObject(Person) -> ", p.Name, "/", p.Age, "/", p.Score
+    doAssert p == sent
+
+  block echoObjectArray:
+    # Heterogeneous object[]: ArraySingleObject on the wire; boxed primitives
+    # travel as MemberPrimitiveTyped records alongside string, null and class
+    # elements
+    let pia = Person(Name: "Pia", Age: 6, Score: 8.5)
+    let sent = objectArrayValue(@[
+      toRemotingValue(42'i32), toRemotingValue("text"), nullValue(),
+      toRemotingValue(2.5'f64), toRemotingValue(true), toRemotingValue(pia)])
+    let r = await client.call("EchoObjectArray", typename, @[sent], @[personLibrary()])
+    doAssert r.kind == rvArray, "EchoObjectArray: expected array, got " & $r.kind
+    echo "EchoObjectArray -> ", r.len, " elements"
+    doAssert r.len == 6
+    doAssert r[0].getInt32 == 42, "EchoObjectArray[0]: expected 42"
+    doAssert r[1].getString == "text", "EchoObjectArray[1]: expected \"text\""
+    doAssert r[2].isNull, "EchoObjectArray[2]: expected null, got " & $r[2].kind
+    doAssert r[3].getDouble == 2.5, "EchoObjectArray[3]: expected 2.5"
+    doAssert r[4].getBool == true, "EchoObjectArray[4]: expected true"
+    doAssert classToObject[Person](r[5]) == pia,
+      "EchoObjectArray[5]: Person mismatch"
+
+  block fireAndForget:
+    # One-way call: OneWayRequest operation type and no reply frame; the same
+    # connection must stay usable for the next two-way call. .NET dispatches
+    # one-way calls asynchronously, so poll for the side effect.
+    await client.callOneWay("FireAndForget", typename, "one-way from Nim")
+    var last = ""
+    for attempt in 0..<50:
+      let r = await client.call("GetLastOneWayMessage", typename)
+      last = r.getString
+      if last == "one-way from Nim":
+        break
+      await sleepAsync(100)
+    echo "FireAndForget(one-way) -> ", last
+    doAssert last == "one-way from Nim", "FireAndForget: expected message, got \"" & last & "\""
+
   block throwError:
     # The server throws; call surfaces the serialized exception as RemoteException
     var caught = false
