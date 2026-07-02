@@ -1,5 +1,9 @@
 import ../src/DotNimRemoting
 
+type Person = object
+  Name: string
+  Age: int32
+
 # Example server: a method-level service handler
 proc myService(methodName: string, args: seq[RemotingValue]): Future[RemotingValue] {.async.} =
   echo "Received call: ", methodName
@@ -13,6 +17,10 @@ proc myService(methodName: string, args: seq[RemotingValue]): Future[RemotingVal
     for elem in args[0].elements:
       sum += elem.getInt32
     return toRemotingValue(sum)
+  of "DescribePerson":
+    # Class arguments parse back into plain Nim objects
+    let p = classToObject[Person](args[0])
+    return toRemotingValue(p.Name & " is " & $p.Age)
   else:
     # Unknown method: reply void
     return nullValue()

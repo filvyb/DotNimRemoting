@@ -266,37 +266,38 @@ proc main() {.async.} =
       doAssert r[i].getInt32 == int32(5 + i), "MakeRange[" & $i & "]: expected " & $(5 + i)
 
   block echoPerson:
+    let sent = Person(Name: "Ada", Age: 36, Score: 99.5)
     let r = await client.call("EchoPerson", typename,
-      @[personValue("Ada", 36, 99.5)], @[personLibrary()])
+      @[toRemotingValue(sent)], @[personLibrary()])
     doAssert r.kind == rvClass, "EchoPerson: expected class, got " & $r.kind
-    let (name, age, score) = personFields(r)
-    echo "EchoPerson -> ", name, "/", age, "/", score
-    doAssert name == "Ada" and age == 36 and score == 99.5
+    let p = classToObject[Person](r)
+    echo "EchoPerson -> ", p.Name, "/", p.Age, "/", p.Score
+    doAssert p == sent
 
   block describePerson:
     let r = await client.call("DescribePerson", typename,
-      @[personValue("Bob", 25, 1.0)], @[personLibrary()])
+      @[toRemotingValue(Person(Name: "Bob", Age: 25, Score: 1.0))], @[personLibrary()])
     echo "DescribePerson -> ", r.getString
     doAssert r.getString == "Bob:25"
 
   block makePerson:
     let r = await client.call("MakePerson", typename, "Carol", 30)
     doAssert r.kind == rvClass, "MakePerson: expected class, got " & $r.kind
-    let (name, age, score) = personFields(r)
-    echo "MakePerson -> ", name, "/", age, "/", score
-    doAssert name == "Carol" and age == 30 and score == 15.0
+    let p = classToObject[Person](r)
+    echo "MakePerson -> ", p.Name, "/", p.Age, "/", p.Score
+    doAssert p == Person(Name: "Carol", Age: 30, Score: 15.0)
 
   block echoPersonArray:
+    let dan = Person(Name: "Dan", Age: 1, Score: 0.5)
+    let eve = Person(Name: "Eve", Age: 2, Score: 1.5)
     let r = await client.call("EchoPersonArray", typename,
-      @[personArrayValue(@[personValue("Dan", 1, 0.5), personValue("Eve", 2, 1.5)])],
+      @[personArrayValue(@[toRemotingValue(dan), toRemotingValue(eve)])],
       @[personLibrary()])
     doAssert r.kind == rvArray, "EchoPersonArray: expected array, got " & $r.kind
     echo "EchoPersonArray -> ", r.len, " elements"
     doAssert r.len == 2
-    let (name0, age0, score0) = personFields(r[0])
-    doAssert name0 == "Dan" and age0 == 1'i32 and score0 == 0.5
-    let (name1, age1, score1) = personFields(r[1])
-    doAssert name1 == "Eve" and age1 == 2'i32 and score1 == 1.5
+    doAssert classToObject[Person](r[0]) == dan
+    doAssert classToObject[Person](r[1]) == eve
 
   block makeTwins:
     # The server returns the same Person twice; the second array element
@@ -306,9 +307,9 @@ proc main() {.async.} =
     echo "MakeTwins -> ", r.len, " elements"
     doAssert r.len == 2
     for i in 0..1:
-      let (name, age, score) = personFields(r[i])
-      doAssert name == "Gemini" and age == 9'i32 and score == 18.0,
-        "MakeTwins[" & $i & "]: got " & name & "/" & $age & "/" & $score
+      let p = classToObject[Person](r[i])
+      doAssert p == Person(Name: "Gemini", Age: 9, Score: 18.0),
+        "MakeTwins[" & $i & "]: got " & p.Name & "/" & $p.Age & "/" & $p.Score
 
   block echoPersonNull:
     let r = await client.call("EchoPerson", typename, @[nullValue()])
@@ -316,16 +317,18 @@ proc main() {.async.} =
     doAssert r.isNull, "EchoPerson(null): expected null, got " & $r.kind
 
   block echoEmployee:
+    let sent = Employee(Name: "Frank", Home: Address(Street: "Main 5", City: "Brno"))
     let r = await client.call("EchoEmployee", typename,
-      @[employeeValue("Frank", addressValue("Main 5", "Brno"))], @[personLibrary()])
+      @[toRemotingValue(sent)], @[personLibrary()])
     doAssert r.kind == rvClass, "EchoEmployee: expected class, got " & $r.kind
-    let (name, street, city) = employeeFields(r)
-    echo "EchoEmployee -> ", name, "/", street, "/", city
-    doAssert name == "Frank" and street == "Main 5" and city == "Brno"
+    let e = classToObject[Employee](r)
+    echo "EchoEmployee -> ", e.Name, "/", e.Home.Street, "/", e.Home.City
+    doAssert e == sent
 
   block describeEmployee:
+    let grace = Employee(Name: "Grace", Home: Address(Street: "Side 9", City: "Praha"))
     let r = await client.call("DescribeEmployee", typename,
-      @[employeeValue("Grace", addressValue("Side 9", "Praha"))], @[personLibrary()])
+      @[toRemotingValue(grace)], @[personLibrary()])
     echo "DescribeEmployee -> ", r.getString
     doAssert r.getString == "Grace@Praha"
 

@@ -679,14 +679,17 @@ proc systemClassValue*(className: string,
 
 proc objectToClass*[T: object](obj: T, className: string = "", libraryId: int32 = 0): RemotingValue =
   ## Converts a Nim object to a class value; fields must be convertible with
-  ## toRemotingValue. className defaults to the Nim type name.
+  ## toRemotingValue. For nested class-typed fields, define a toRemotingValue
+  ## overload for the field type. className defaults to the Nim type name.
+  mixin toRemotingValue
   var members: seq[(string, RemotingValue)]
   for fieldName, fieldValue in fieldPairs(obj):
     when compiles(toRemotingValue(fieldValue)):
       members.add((fieldName, toRemotingValue(fieldValue)))
     else:
       {.error: "objectToClass: unsupported field type " & $typeof(fieldValue) &
-               " for field '" & fieldName & "' in " & $T.}
+               " for field '" & fieldName & "' in " & $T &
+               " (define a toRemotingValue overload for it)".}
   classValue(if className.len > 0: className else: $T, libraryId, members)
 
 proc classToObject*[T: object](value: RemotingValue): T =
@@ -717,6 +720,7 @@ proc classToObject*[T: object](value: RemotingValue): T =
     elif fieldValue is float32: fieldValue = m.getSingle
     elif fieldValue is float64: fieldValue = m.getDouble
     elif fieldValue is types.DateTime: fieldValue = m.getDateTime
+    elif fieldValue is object: fieldValue = classToObject[typeof(fieldValue)](m)
     else:
       {.error: "classToObject: unsupported field type " & $typeof(fieldValue) &
                " for field '" & fieldName & "' in " & $T.}

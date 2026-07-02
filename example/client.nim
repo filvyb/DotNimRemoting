@@ -1,5 +1,9 @@
 import ../src/DotNimRemoting
 
+type Person = object
+  Name: string
+  Age: int32
+
 # Example client: calling a .NET remoting service
 proc clientExample() {.async.} =
   let client = newNrtpTcpClient("tcp://localhost:8080/MyServer.rem")
@@ -15,12 +19,11 @@ proc clientExample() {.async.} =
   let total = await client.call("SumIntArray", serviceType, @[1'i32, 2, 3])
   echo "SumIntArray -> ", total.getInt32()
 
-  # Custom classes need the library (assembly) record they reference
+  # Plain Nim objects convert to class values with objectToClass; they need
+  # the library (assembly) record they reference
   let lib = binaryLibrary("MyAssembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null", 100)
-  let person = classValue("MyNamespace.Person", lib.libraryId, {
-    "Name": toRemotingValue("Ada"),
-    "Age": toRemotingValue(36'i32),
-  })
+  let person = objectToClass(Person(Name: "Ada", Age: 36),
+                             "MyNamespace.Person", lib.libraryId)
   let described = await client.call("DescribePerson", serviceType, @[person], @[lib])
   echo "DescribePerson -> ", described.getString()
 

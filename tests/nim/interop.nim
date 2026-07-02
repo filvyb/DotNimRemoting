@@ -1,7 +1,22 @@
 import ../../src/DotNimRemoting
 
-# Test-domain values (Person/Address/Employee) shared by the Nim interop
-# client and server; the generic plumbing lives in the library.
+# Test-domain types (Person/Address/Employee) shared by the Nim interop
+# client and server; field names match the public fields of the C# classes,
+# so objectToClass/classToObject convert them directly.
+
+type
+  Person* = object
+    Name*: string
+    Age*: int32
+    Score*: float64
+
+  Address* = object
+    Street*: string
+    City*: string
+
+  Employee* = object
+    Name*: string
+    Home*: Address
 
 const
   PersonClassName* = "DotNimTester.Lib.Person"
@@ -15,54 +30,18 @@ const
 proc personLibrary*(): BinaryLibrary =
   binaryLibrary(LibAssemblyName, PersonLibraryId)
 
-#
-# Test-domain value constructors
-#
+# These overloads bind each Nim type to its .NET class name; objectToClass
+# also picks them up for nested fields (Employee.Home).
 
-proc personValue*(name: string, age: int32, score: float64): RemotingValue =
-  ## Member names must match the public fields of the C# class
-  classValue(PersonClassName, PersonLibraryId, {
-    "Name": toRemotingValue(name),
-    "Age": toRemotingValue(age),
-    "Score": toRemotingValue(score),
-  })
+proc toRemotingValue*(a: Address): RemotingValue =
+  objectToClass(a, AddressClassName, PersonLibraryId)
 
-proc addressValue*(street, city: string): RemotingValue =
-  classValue(AddressClassName, PersonLibraryId, {
-    "Street": toRemotingValue(street),
-    "City": toRemotingValue(city),
-  })
+proc toRemotingValue*(p: Person): RemotingValue =
+  objectToClass(p, PersonClassName, PersonLibraryId)
 
-proc employeeValue*(name: string, address: RemotingValue): RemotingValue =
-  ## Employee with a class-typed Home member
-  classValue(EmployeeClassName, PersonLibraryId, {
-    "Name": toRemotingValue(name),
-    "Home": address,
-  })
+proc toRemotingValue*(e: Employee): RemotingValue =
+  objectToClass(e, EmployeeClassName, PersonLibraryId)
 
 proc personArrayValue*(people: seq[RemotingValue]): RemotingValue =
   ## Person[] as a typed class array, so .NET materializes a typed array
   classArrayValue(PersonClassName, PersonLibraryId, people)
-
-#
-# Test-domain value extraction
-#
-
-proc personFields*(rv: RemotingValue): tuple[name: string, age: int32, score: float64] =
-  ## Field order doubles as the fallback layout for ClassWithId records
-  const layout = ["Name", "Age", "Score"]
-  result.name = rv.getMember("Name", layout).getString
-  result.age = rv.getMember("Age", layout).getInt32
-  result.score = rv.getMember("Score", layout).getDouble
-
-proc addressFields*(rv: RemotingValue): tuple[street, city: string] =
-  const layout = ["Street", "City"]
-  result.street = rv.getMember("Street", layout).getString
-  result.city = rv.getMember("City", layout).getString
-
-proc employeeFields*(rv: RemotingValue): tuple[name, street, city: string] =
-  const layout = ["Name", "Home"]
-  result.name = rv.getMember("Name", layout).getString
-  let (street, city) = addressFields(rv.getMember("Home", layout))
-  result.street = street
-  result.city = city

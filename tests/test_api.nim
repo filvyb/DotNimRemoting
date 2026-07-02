@@ -5,6 +5,19 @@ import DotNimRemoting/msnrbf/context
 
 # High-level API tests; everything round-trips through real serialized bytes.
 
+type
+  Address = object
+    Street: string
+    City: string
+  Employee = object
+    Name: string
+    Home: Address
+
+# Module-level overload: gives Employee's nested Home field its .NET class
+# name when objectToClass converts it
+proc toRemotingValue(a: Address): RemotingValue =
+  objectToClass(a, "Ns.Address", 100)
+
 suite "RemotingValue construction and inspection":
   test "primitive and string conversion":
     check toRemotingValue(true).getBool == true
@@ -79,6 +92,16 @@ suite "RemotingValue construction and inspection":
     let data = createMethodReturnResponse(rv, libraries = @[lib])
     let back = returnValueOf(deserializeRemotingMessage(data))
     check classToObject[Person](back) == original
+
+  test "nested objects round-trip through a toRemotingValue overload":
+    let original = Employee(Name: "Frank",
+                            Home: Address(Street: "Main 5", City: "Brno"))
+    let rv = objectToClass(original, "Ns.Employee", 100)
+    check rv["Home"].className == "Ns.Address"
+    let lib = binaryLibrary("Asm", 100)
+    let data = createMethodReturnResponse(rv, libraries = @[lib])
+    let back = returnValueOf(deserializeRemotingMessage(data))
+    check classToObject[Employee](back) == original
 
   test "collectLibraryIds walks nested values":
     let employee = classValue("Ns.Employee", 100, {

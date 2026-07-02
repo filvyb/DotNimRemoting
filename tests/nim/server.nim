@@ -62,33 +62,31 @@ proc echoService(methodName: string, args: seq[RemotingValue]): Future[RemotingV
       # Null object return travels as the NoReturnValue flag
       return nullValue()
     # Rebuild rather than echo, so the response carries our own class metadata
-    let (pname, age, score) = personFields(args[0])
-    return personValue(pname, age, score)
+    return toRemotingValue(classToObject[Person](args[0]))
   of "DescribePerson":
-    let (pname, age, _) = personFields(args[0])
-    return toRemotingValue(pname & ":" & $age)
+    let p = classToObject[Person](args[0])
+    return toRemotingValue(p.Name & ":" & $p.Age)
   of "MakePerson":
     let age = args[1].getInt32
-    return personValue(args[0].getString, age, age.float64 * 0.5)
+    return toRemotingValue(Person(Name: args[0].getString, Age: age,
+                                  Score: age.float64 * 0.5))
   of "EchoPersonArray":
     var people: seq[RemotingValue]
     for elem in args[0].elements:
-      let (pname, age, score) = personFields(elem)
-      people.add(personValue(pname, age, score))
+      people.add(toRemotingValue(classToObject[Person](elem)))
     return personArrayValue(people)
   of "MakeTwins":
     # The writer dedupes by pointer: the second element goes out as a
     # MemberReference, so .NET sees one shared object
-    let pname = args[0].getString
     let age = args[1].getInt32
-    let p = personValue(pname, age, age.float64 * 2.0)
+    let p = toRemotingValue(Person(Name: args[0].getString, Age: age,
+                                   Score: age.float64 * 2.0))
     return personArrayValue(@[p, p])
   of "EchoEmployee":
-    let (ename, street, city) = employeeFields(args[0])
-    return employeeValue(ename, addressValue(street, city))
+    return toRemotingValue(classToObject[Employee](args[0]))
   of "DescribeEmployee":
-    let (ename, _, city) = employeeFields(args[0])
-    return toRemotingValue(ename & "@" & city)
+    let e = classToObject[Employee](args[0])
+    return toRemotingValue(e.Name & "@" & e.Home.City)
   else:
     # Unknown method: reply void
     return nullValue()

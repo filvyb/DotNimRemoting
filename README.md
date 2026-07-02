@@ -74,19 +74,27 @@ waitFor main()
 
 ### Custom Classes
 
-Class instances are built with `classValue` and reference a library (assembly)
-record created with `binaryLibrary`:
+Plain Nim objects convert to class values with `objectToClass` and back with
+`classToObject`; class values reference a library (assembly) record created
+with `binaryLibrary`:
 
 ```nim
+type Person = object
+  Name: string
+  Age: int32
+  Score: float64
+
 let lib = binaryLibrary("Lib, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null", 100)
-let person = classValue("DotNimTester.Lib.Person", lib.libraryId, {
-  "Name": toRemotingValue("Ada"),
-  "Age": toRemotingValue(36'i32),
-  "Score": toRemotingValue(99.5),
-})
-let r = await client.call("EchoPerson", typename, @[person], @[lib])
-echo r["Name"].getString(), " is ", r["Age"].getInt32()
+let ada = objectToClass(Person(Name: "Ada", Age: 36, Score: 99.5),
+                        "DotNimTester.Lib.Person", lib.libraryId)
+let r = await client.call("EchoPerson", typename, @[ada], @[lib])
+echo classToObject[Person](r)
 ```
+
+For ad-hoc members without a Nim type, build the value directly with
+`classValue(className, libraryId, {"Name": toRemotingValue("Ada"), ...})` and
+read members with `r["Name"].getString()`. Nested class-typed fields work by
+defining a `toRemotingValue` overload for the field's type.
 
 Calls that fail on the .NET side raise `RemoteException`, carrying the .NET
 exception type in `className` and its message in `msg`.
@@ -95,6 +103,10 @@ For full-control scenarios (custom records, manual wire layout), the protocol
 layers remain available under `DotNimRemoting/tcp/*` and
 `DotNimRemoting/msnrbf/*` — see `registerHandler`, `invoke` and the
 `msnrbf/records` modules.
+
+### Additional examples
+
+For further examples check `examples`, `tests/nim/` and project [OlyVIADownloader](https://github.com/filvyb/OlyVIADownloader).
 
 ## .NET Interoperability
 
