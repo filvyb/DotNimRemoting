@@ -1,30 +1,51 @@
 import asyncnet, asyncdispatch
 import faststreams/[outputs]
 import types, helpers, common
-import strutils, uri
+import strutils, uri, deques
 import ../msnrbf/helpers as msnrbf
 import ../msnrbf/records/[member, methodinv, serialization]
 
 type
+  AsyncLock = ref object
+    locked: bool
+    waiters: Deque[Future[void]]
+
   NrtpTcpClient* = ref object
     socket: AsyncSocket
     serverUri: Uri
     timeout: int
     connected: bool
+    maxContentLength*: int
+    lock: AsyncLock
 
-proc newNrtpTcpClient*(serverUri: string, timeout: int = DefaultTimeout): NrtpTcpClient =
+proc acquire(lock: AsyncLock): Future[void] =
+  result = newFuture[void]("AsyncLock.acquire")
+  if not lock.locked:
+    lock.locked = true
+    result.complete()
+  else:
+    lock.waiters.addLast(result)
+
+proc release(lock: AsyncLock) =
+  if lock.waiters.len > 0:
+    lock.waiters.popFirst().complete()
+  else:
+    lock.locked = false
+
+proc newNrtpTcpClient*(serverUri: string, timeout: int = DefaultTimeout,
+                       maxContentLength: int = DefaultMaxContentLength): NrtpTcpClient =
   ## Creates a new MS-NRTP client for TCP communication
   ## serverUri should be in the format: tcp://hostname:port/path
   ## As specified in section 2.2.3.2.2 of MS-NRTP
-  
+
   # Parse and validate URI
   let uri = parseUri(serverUri)
   if uri.scheme != "tcp":
     raise newException(ValueError, "Invalid URI scheme, expected 'tcp://'")
-  
+
   if uri.hostname == "":
     raise newException(ValueError, "Missing hostname in URI")
-  
+
   if uri.port == "":
     raise newException(ValueError, "Missing port in URI")
 
@@ -33,7 +54,9 @@ proc newNrtpTcpClient*(serverUri: string, timeout: int = DefaultTimeout): NrtpTc
     socket: newAsyncSocket(),
     serverUri: uri,
     timeout: timeout,
-    connected: false
+    connected: false,
+    maxContentLength: maxContentLength,
+    lock: AsyncLock(waiters: initDeque[Future[void]]())
   )
 
 proc setPath*(client: NrtpTcpClient, path: string) =
@@ -53,7 +76,10 @@ proc connect*(client: NrtpTcpClient): Future[void] {.async.} =
   try:
     await client.socket.connect(client.serverUri.hostname, Port(client.serverUri.port.parseInt()))
     client.connected = true
-  except:
+  except CatchableError:
+    # Drop the half-open socket so a retry starts from a fresh one
+    client.socket.close()
+    client.socket = nil
     client.connected = false
     raise
 
@@ -108,8 +134,13 @@ proc sendRequest*(client: NrtpTcpClient,
   let messageBytes = output.getOutput(seq[byte])
   debugLog "[CLIENT] Total message size: ", messageBytes.len, " bytes"
   
-  # Send the message
-  await client.socket.send(cast[string](messageBytes))
+  # Send the message; a failed send leaves the stream in an unknown state,
+  # so close and let the next call reconnect
+  try:
+    await client.socket.send(cast[string](messageBytes))
+  except CatchableError:
+    await client.close()
+    raise
   debugLog "[CLIENT] Request sent"
 
 proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
@@ -123,48 +154,61 @@ proc recvReply*(client: NrtpTcpClient): Future[seq[byte]] {.async.} =
     raise newException(IOError, "Not connected to server")
   
   debugLog "[CLIENT] Reading message frame..."
-  let frameResult = await readMessageFrameAsync(client.socket, client.timeout)
-  let frame = frameResult.value
-  let frameSize = frameResult.bytesRead
-  
-  debugLog "[CLIENT] Successfully read message frame, size: ", frameSize, " bytes"
-  
-  # Validate that this is a reply message
-  if frame.operationType != otReply:
-    debugLog "[CLIENT] Error: Expected Reply operation type, got ", frame.operationType
-    raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
+  try:
+    let frameResult = await readMessageFrameAsync(client.socket, client.timeout,
+                                                  client.maxContentLength)
+    let frame = frameResult.value
+    let frameSize = frameResult.bytesRead
 
-  # A CloseConnection header means the server will not serve further requests on this connection
-  for header in frame.headers:
-    if header.token == htCloseConnection:
-      debugLog "[CLIENT] Server requested connection close"
-      await client.close()
-      break
+    debugLog "[CLIENT] Successfully read message frame, size: ", frameSize, " bytes"
 
-  debugLog "[CLIENT] Content length: ", frame.messageContent.len, " bytes"
-  debugLog "[CLIENT] Response fully received"
-  return frame.messageContent
+    # Validate that this is a reply message
+    if frame.operationType != otReply:
+      debugLog "[CLIENT] Error: Expected Reply operation type, got ", frame.operationType
+      raise newException(IOError, "Expected Reply operation type, got " & $frame.operationType)
 
-proc invoke*(client: NrtpTcpClient, 
-             methodName: string, 
-             typeName: string, 
+    # A CloseConnection header means the server will not serve further requests on this connection
+    for header in frame.headers:
+      if header.token == htCloseConnection:
+        debugLog "[CLIENT] Server requested connection close"
+        await client.close()
+        break
+
+    debugLog "[CLIENT] Content length: ", frame.messageContent.len, " bytes"
+    debugLog "[CLIENT] Response fully received"
+    return frame.messageContent
+  except CatchableError:
+    # A timeout or partial frame leaves the stream desynced (an abandoned
+    # recv may still consume bytes), so the connection cannot be reused
+    debugLog "[CLIENT] Failed to read reply, closing connection"
+    await client.close()
+    raise
+
+proc invoke*(client: NrtpTcpClient,
+             methodName: string,
+             typeName: string,
              isOneWay: bool = false,
              requestData: seq[byte]): Future[seq[byte]] {.async.} =
   ## Invokes a remote method and returns the response
-  ## This combines sendRequest and recvReply into a single operation
-  
-  # Send the request
-  debugLog "[CLIENT] Sending bytes: ", requestData.len, " bytes"
-  await client.sendRequest(methodName, typeName, isOneWay, requestData)
-  
-  # If one-way method, no response is expected
-  if isOneWay:
-    debugLog "[CLIENT] One-way call, no response expected"
-    return @[]
-  
-  # Receive and return the reply
-  debugLog "[CLIENT] Waiting for response"
-  return await client.recvReply()
+  ## This combines sendRequest and recvReply into a single operation.
+  ## Concurrent invocations on one client are serialized, so each
+  ## request/reply pair finishes before the next request is sent.
+  await client.lock.acquire()
+  try:
+    # Send the request
+    debugLog "[CLIENT] Sending bytes: ", requestData.len, " bytes"
+    await client.sendRequest(methodName, typeName, isOneWay, requestData)
+
+    # If one-way method, no response is expected
+    if isOneWay:
+      debugLog "[CLIENT] One-way call, no response expected"
+      return @[]
+
+    # Receive and return the reply
+    debugLog "[CLIENT] Waiting for response"
+    return await client.recvReply()
+  finally:
+    client.lock.release()
 
 proc call*(client: NrtpTcpClient, methodName, typeName: string,
            args: seq[RemotingValue],

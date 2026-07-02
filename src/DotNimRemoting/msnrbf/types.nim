@@ -3,6 +3,10 @@ import strutils
 import unicode
 import macros
 
+when cpuEndian == bigEndian:
+  {.error: "DotNimRemoting requires a little-endian host: values are cast " &
+           "directly to/from the little-endian MS-NRBF/MS-NRTP wire format".}
+
 type
   Char* = string
     ## Section 2.1.1.1 - Unicode character value

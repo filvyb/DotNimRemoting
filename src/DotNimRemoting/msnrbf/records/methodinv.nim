@@ -270,10 +270,18 @@ proc readBinaryMethodReturn*(inp: InputStream): BinaryMethodReturn =
   if MessageFlag.ArgsInline in result.messageEnum:
     result.args = readArrayOfValueWithCode(inp)
 
-proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue =
+const MaxValueNestingDepth* {.intdefine.} = 10_000
+  ## Upper bound on class/array nesting while reading; input beyond this
+  ## depth is rejected rather than risking stack overflow on hostile data.
+  ## Override at compile time with -d:MaxValueNestingDepth=N. Debug builds
+  ## abort earlier via Nim's call depth guard (-d:nimCallDepthLimit)
+
+proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext, depth: int = 0): RemotingValue =
   ## Reads any member reference and referenceables from the input stream into a RemotingValue.
   ## The ReferenceContext tracks class metadata across records so ClassWithId
   ## records can resolve their MetadataId.
+  if depth > MaxValueNestingDepth:
+    raise newException(IOError, "Record nesting exceeds " & $MaxValueNestingDepth & " levels")
   proc readClassMembers(inp: InputStream, ctx: ReferenceContext, info: ClassMetadataInfo): seq[RemotingValue] =
     ## Reads class member values following a class record
     ## Members declared btPrimitive are read as MemberPrimitiveUnTyped (Section 2.3.2);
@@ -298,7 +306,7 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
           if nulls > 0:
             raise newException(IOError, "Null record count exceeds remaining class members")
         else:
-          result.add(readRemotingValue(inp, ctx))
+          result.add(readRemotingValue(inp, ctx, depth + 1))
           inc i
 
   # A BinaryLibrary record may precede the record in any member position
@@ -393,12 +401,12 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
   of rtArraySinglePrimitive:
     # Read ArraySinglePrimitive record (Section 2.4.3.3)
     let arrayRecord = readArraySinglePrimitive(inp)
-    let length = arrayRecord.arrayInfo.length     # Number of elements to read
-    var elements = newSeq[RemotingValue](length)  # Pre-allocate sequence
+    let length = arrayRecord.arrayInfo.length
+    var elements = newSeqOfCap[RemotingValue](min(length, 1024))
 
     for i in 0..<length:
       let value = readMemberPrimitiveUnTyped(inp, arrayRecord.primitiveType)
-      elements[i] = RemotingValue(kind: rvPrimitive, primitiveVal: value.value)
+      elements.add(RemotingValue(kind: rvPrimitive, primitiveVal: value.value))
 
     result = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
       record: ArrayRecord(kind: rtArraySinglePrimitive, arraySinglePrimitive: arrayRecord),
@@ -420,7 +428,7 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
         count += nullsToAdd
       else:
         # Read the element as a full record (BinaryObjectString, MemberReference, or ObjectNull)
-        elements.add(readRemotingValue(inp, ctx))
+        elements.add(readRemotingValue(inp, ctx, depth + 1))
         count += 1
 
     # Construct array result
@@ -445,7 +453,7 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
           result.arrayVal.elements.add(RemotingValue(kind: rvNull))
         count += nullsToAdd
       else:
-        result.arrayVal.elements.add(readRemotingValue(inp, ctx))
+        result.arrayVal.elements.add(readRemotingValue(inp, ctx, depth + 1))
         count += 1
   of rtBinaryArray:
     # Read the BinaryArray record metadata
@@ -478,7 +486,7 @@ proc readRemotingValue*(inp: InputStream, ctx: ReferenceContext): RemotingValue 
             elements.add(RemotingValue(kind: rvNull))
           count += nullsToAdd
         else:
-          elements.add(readRemotingValue(inp, ctx))
+          elements.add(readRemotingValue(inp, ctx, depth + 1))
           count += 1
     
     # Construct the result

@@ -14,10 +14,9 @@ const
   # Largest single recv issued by recvExact, to avoid huge upfront buffers
   RecvChunkSize = 4096
   DefaultMaxContentLength* = 64 * 1024 * 1024 * 10
-
-var maxContentLength* = DefaultMaxContentLength
-  ## Upper bound for message content accepted from the network.
-  ## Adjust before reading frames if larger messages are expected.
+    ## Default upper bound for message content accepted from the network.
+    ## Clients and servers carry their own limit; set their maxContentLength
+    ## field if larger messages are expected.
 
 type
   OperationType* = enum
@@ -152,7 +151,8 @@ proc readCountedStringAsync*(socket: AsyncSocket, timeout: int = 10000): Future[
   result.bytesRead = bytesRead
 
     
-proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: ContentLength, bytesRead: int]] {.async.} =
+proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000,
+                             maxContentLength: int = DefaultMaxContentLength): Future[tuple[value: ContentLength, bytesRead: int]] {.async.} =
   ## Read a ContentLength from the async socket, returning the value and bytes read
   var bytesRead = 0
 
@@ -176,7 +176,8 @@ proc readContentLengthAsync*(socket: AsyncSocket, timeout: int = 10000): Future[
 
   result.bytesRead = bytesRead
 
-proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int): Future[seq[byte]] {.async.} =
+proc readChunkedContentAsync*(socket: AsyncSocket, timeout: int,
+                              maxContentLength: int = DefaultMaxContentLength): Future[seq[byte]] {.async.} =
   ## Reads chunked content from an async socket until a chunk size of 0 is encountered.
   ## Returns the complete message content as a sequence of bytes.
   ## Follows MS-NRTP section 2.2.3.3.2 for chunked message content.
@@ -321,7 +322,8 @@ proc readFrameHeaderAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tu
   result.bytesRead = bytesRead
 
 
-proc readMessageFrameRest(socket: AsyncSocket, timeout: int): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
+proc readMessageFrameRest(socket: AsyncSocket, timeout: int,
+                          maxContentLength: int): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
   ## Reads the remainder of a MessageFrame after the 4-byte protocol
   ## identifier has already been consumed and validated.
   var bytesRead = 0
@@ -341,7 +343,7 @@ proc readMessageFrameRest(socket: AsyncSocket, timeout: int): Future[tuple[value
   bytesRead += 2
   
   # Read content length
-  let contentLength = await readContentLengthAsync(socket, timeout)
+  let contentLength = await readContentLengthAsync(socket, timeout, maxContentLength)
   frame.contentLength = contentLength.value
   bytesRead += contentLength.bytesRead
   
@@ -362,7 +364,7 @@ proc readMessageFrameRest(socket: AsyncSocket, timeout: int): Future[tuple[value
       frame.messageContent[i] = byte(data[i])
     bytesRead += contentLength
   else: # cdChunked
-    frame.messageContent = await readChunkedContentAsync(socket, timeout)
+    frame.messageContent = await readChunkedContentAsync(socket, timeout, maxContentLength)
     # Note: bytesRead is not incremented here as we don't track exact bytes in chunked content
   
   result.value = frame
@@ -372,16 +374,18 @@ proc checkProtocolId(protocolData: string) =
   if cast[ptr int32](unsafeAddr protocolData[0])[] != ProtocolId:
     raise newException(IOError, "Invalid protocol identifier; expected 'NET.' (0x54454E2E)")
 
-proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
+proc readMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000,
+                            maxContentLength: int = DefaultMaxContentLength): Future[tuple[value: MessageFrame, bytesRead: int]] {.async.} =
   ## Reads a MessageFrame from the async socket, including its content, returning the value and bytes read.
   ## Follows MS-NRTP section 2.2.3.3 for message frame structure.
   let protocolData = await recvExact(socket, 4, timeout, "reading protocol identifier")
   checkProtocolId(protocolData)
-  let rest = await readMessageFrameRest(socket, timeout)
+  let rest = await readMessageFrameRest(socket, timeout, maxContentLength)
   result.value = rest.value
   result.bytesRead = 4 + rest.bytesRead
 
-proc tryReadMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Future[tuple[value: MessageFrame, bytesRead: int, eof: bool]] {.async.} =
+proc tryReadMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000,
+                               maxContentLength: int = DefaultMaxContentLength): Future[tuple[value: MessageFrame, bytesRead: int, eof: bool]] {.async.} =
   ## Like readMessageFrameAsync, but waits without a timeout for the start of
   ## the next frame and sets eof instead of raising when the peer closes the
   ## connection at a frame boundary. Lets servers keep a connection alive
@@ -393,7 +397,7 @@ proc tryReadMessageFrameAsync*(socket: AsyncSocket, timeout: int = 10000): Futur
   if protocolData.len < 4:
     protocolData.add(await recvExact(socket, 4 - protocolData.len, timeout, "reading protocol identifier"))
   checkProtocolId(protocolData)
-  let rest = await readMessageFrameRest(socket, timeout)
+  let rest = await readMessageFrameRest(socket, timeout, maxContentLength)
   result.value = rest.value
   result.bytesRead = 4 + rest.bytesRead
 

@@ -22,15 +22,18 @@ type
     port: int
     running: bool
     handlers: TableRef[string, RequestHandler]
+    maxContentLength*: int
 
-proc newNrtpTcpServer*(port: int): NrtpTcpServer =
+proc newNrtpTcpServer*(port: int,
+                       maxContentLength: int = DefaultMaxContentLength): NrtpTcpServer =
   ## Creates a new MS-NRTP server for TCP communication
   ## As specified in section 2.1.1.2 of MS-NRTP
   result = NrtpTcpServer(
     socket: newAsyncSocket(),
     port: port,
     running: false,
-    handlers: newTable[string, RequestHandler]()
+    handlers: newTable[string, RequestHandler](),
+    maxContentLength: maxContentLength
   )
 
 proc registerHandler*(server: NrtpTcpServer, path: string, handler: RequestHandler) =
@@ -82,7 +85,8 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
   try:
     while true:
       debugLog "[SERVER] Reading message frame..."
-      let frameResult = await tryReadMessageFrameAsync(client)
+      let frameResult = await tryReadMessageFrameAsync(client,
+                                                       maxContentLength = server.maxContentLength)
       if frameResult.eof:
         debugLog "[SERVER] Client disconnected"
         break
