@@ -1550,17 +1550,19 @@ suite "SerializationContext Tests":
     check deserialized.methodCallArray.len == 1
 
     # Arrays aren't allowed inline in member positions (Section 2.7), so the
-    # call array element is a MemberReference to a top-level record
+    # call array element is a MemberReference to a top-level record, and the
+    # nested array is likewise deferred to its own record
     check deserialized.methodCallArray[0].kind == rvReference
-    let argsArray = resolveReference(deserialized, deserialized.methodCallArray[0])
+    check deserialized.referencedRecords.len == 2
+
+    resolveReferences(deserialized)
+    let argsArray = deserialized.methodCallArray[0]
     check argsArray.kind == rvArray
     check argsArray.arrayVal.elements.len == 2
     check argsArray.arrayVal.elements[0].kind == rvString
     check argsArray.arrayVal.elements[0].stringRecord.value.value == "Array Item 1"
 
-    # The nested array is likewise deferred and reached through a reference
-    check argsArray.arrayVal.elements[1].kind == rvReference
-    let nested = resolveReference(deserialized, argsArray.arrayVal.elements[1])
+    let nested = argsArray.arrayVal.elements[1]
     check nested.kind == rvArray
     check nested.arrayVal.elements.len == 2
     check nested.arrayVal.elements[0].primitiveVal.int32Val == 100

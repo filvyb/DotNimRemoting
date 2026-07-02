@@ -51,19 +51,6 @@ proc `$`*(msg: RemotingMessage): string =
   return parts.join("\n")
 
 
-proc resolveReference*(msg: RemotingMessage, value: RemotingValue): RemotingValue =
-  ## Follows a MemberReference to its record, searching referencedRecords and
-  ## the call array. Non-reference values pass through unchanged.
-  if value == nil or value.kind != rvReference:
-    return value
-  for rec in msg.referencedRecords:
-    if objectIdOf(rec) == value.idRef:
-      return rec
-  for rec in msg.methodCallArray:
-    if objectIdOf(rec) == value.idRef:
-      return rec
-  raise newException(ValueError, "Unresolved member reference id " & $value.idRef)
-
 const
   callArrayFlags = {MessageFlag.ArgsIsArray, MessageFlag.ArgsInArray,
                     MessageFlag.ContextInArray, MessageFlag.MethodSignatureInArray,
@@ -83,6 +70,36 @@ proc needsCallArray*(call: BinaryMethodCall): bool =
 proc needsCallArray*(ret: BinaryMethodReturn): bool =
   ## Whether the message flags require a MethodReturnCallArray record
   ret.messageEnum * returnArrayFlags != {}
+
+proc readCallArray(inp: InputStream, ctx: ReferenceContext): seq[RemotingValue] =
+  ## Reads the optional callArray following a BinaryMethodCall/BinaryMethodReturn
+  ## callArray = 0*1(BinaryLibrary) ArraySingleObject ... (Section 2.7)
+  if not inp.readable:
+    raise newException(IOError, "End of stream while reading call array")
+
+  var arrayRecord = peekRecord(inp)
+  while arrayRecord == rtBinaryLibrary:
+    ctx.addLibrary(readBinaryLibrary(inp))
+    arrayRecord = peekRecord(inp)
+  if arrayRecord != rtArraySingleObject:
+    raise newException(IOError, "Expected ArraySingleObject for call array, got " & $arrayRecord)
+
+  # Read the array object
+  let arrayObj = readArraySingleObject(inp)
+  # Read array values as RemotingValue objects
+  # Kinda crude, but works for now
+  var count = 0
+  while count < arrayObj.arrayInfo.length:
+    let nextType = peekRecord(inp)
+    if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
+      let nullsToRead = readOptimizedNulls(inp, nextType)
+      let nullsToAdd = min(nullsToRead, arrayObj.arrayInfo.length - count)
+      for i in 0..<nullsToAdd:
+        result.add(RemotingValue(kind: rvNull))
+      count += nullsToAdd
+    else:
+      result.add(readRemotingValue(inp, ctx))
+      count += 1
 
 proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: BinaryMethodCall, array: seq[RemotingValue]] =
   ## Reads a method call + optional array
@@ -106,33 +123,7 @@ proc readMethodCall*(inp: InputStream, ctx: ReferenceContext): tuple[call: Binar
 
   # Handle optional call array based on flags
   if needsCallArray(result.call):
-    if not inp.readable:
-      raise newException(IOError, "End of stream while reading call array")
-
-    # callArray = 0*1(BinaryLibrary) ArraySingleObject ... (Section 2.7)
-    var arrayRecord = peekRecord(inp)
-    while arrayRecord == rtBinaryLibrary:
-      ctx.addLibrary(readBinaryLibrary(inp))
-      arrayRecord = peekRecord(inp)
-    if arrayRecord != rtArraySingleObject:
-      raise newException(IOError, "Expected ArraySingleObject for call array, got " & $arrayRecord)
-
-    # Read the array object
-    let arrayObj = readArraySingleObject(inp)
-    # Read array values as RemotingValue objects
-    # Kinda crude, but works for now
-    var count = 0
-    while count < arrayObj.arrayInfo.length:
-      let nextType = peekRecord(inp)
-      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
-        let nullsToRead = readOptimizedNulls(inp, nextType)
-        let nullsToAdd = min(nullsToRead, arrayObj.arrayInfo.length - count)
-        for i in 0..<nullsToAdd:
-          result.array.add(RemotingValue(kind: rvNull))
-        count += nullsToAdd
-      else:
-        result.array.add(readRemotingValue(inp, ctx))
-        count += 1
+    result.array = readCallArray(inp, ctx)
 
 proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: BinaryMethodReturn, array: seq[RemotingValue]] =
   ## Reads a method return + optional array
@@ -156,33 +147,7 @@ proc readMethodReturn*(inp: InputStream, ctx: ReferenceContext): tuple[ret: Bina
 
   # Handle optional return array based on flags
   if needsCallArray(result.ret):
-    if not inp.readable:
-      raise newException(IOError, "End of stream while reading return array")
-
-    # callArray = 0*1(BinaryLibrary) ArraySingleObject ... (Section 2.7)
-    var arrayRecord = peekRecord(inp)
-    while arrayRecord == rtBinaryLibrary:
-      ctx.addLibrary(readBinaryLibrary(inp))
-      arrayRecord = peekRecord(inp)
-    if arrayRecord != rtArraySingleObject:
-      raise newException(IOError, "Expected ArraySingleObject for return array, got " & $arrayRecord)
-
-    # Read the array object
-    let arrayObj = readArraySingleObject(inp)
-    # Read array values as RemotingValue objects
-    # Kinda crude, but works for now
-    var count = 0
-    while count < arrayObj.arrayInfo.length:
-      let nextType = peekRecord(inp)
-      if nextType in {rtObjectNullMultiple, rtObjectNullMultiple256}:
-        let nullsToRead = readOptimizedNulls(inp, nextType)
-        let nullsToAdd = min(nullsToRead, arrayObj.arrayInfo.length - count)
-        for i in 0..<nullsToAdd:
-          result.array.add(RemotingValue(kind: rvNull))
-        count += nullsToAdd
-      else:
-        result.array.add(readRemotingValue(inp, ctx))
-        count += 1
+    result.array = readCallArray(inp, ctx)
 
 proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   ## Reads a complete remoting message following MS-NRBF grammar
@@ -264,6 +229,25 @@ proc readRemotingMessage*(inp: InputStream): RemotingMessage =
   raise newException(IOError, "Missing MessageEnd")
 
 
+proc writeCallArray(outp: OutputStream, array: seq[RemotingValue], ctx: SerializationContext) =
+  ## Writes the callArray record containing the given elements (Section 2.7)
+  # Validate that array elements are provided
+  if array.len == 0:
+    raise newException(ValueError, "Call array expected but none provided")
+
+  # Create and write the array record containing the elements
+  let arrayRecord = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
+    record: ArrayRecord(
+      kind: rtArraySingleObject,
+      arraySingleObject: ArraySingleObject(
+        recordType: rtArraySingleObject,
+        arrayInfo: ArrayInfo(length: array.len.int32)
+      )
+    ),
+    elements: array
+  ))
+  writeRemotingValue(outp, arrayRecord, ctx)
+
 proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a method call and its optional call array, using the provided callArrayRecord if needed
   # Write the BinaryMethodCall record to the output stream
@@ -271,22 +255,7 @@ proc writeMethodCall*(outp: OutputStream, call: BinaryMethodCall, array: seq[Rem
 
   # Determine if a call array is required based on the messageEnum flags
   if needsCallArray(call):
-    # Validate that array elements are provided
-    if array.len == 0:
-      raise newException(ValueError, "Call array expected but none provided")
-    
-    # Create and write the array record containing the elements
-    let arrayRecord = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
-      record: ArrayRecord(
-        kind: rtArraySingleObject,
-        arraySingleObject: ArraySingleObject(
-          recordType: rtArraySingleObject,
-          arrayInfo: ArrayInfo(length: array.len.int32)
-        )
-      ),
-      elements: array
-    ))
-    writeRemotingValue(outp, arrayRecord, ctx)
+    writeCallArray(outp, array, ctx)
 
 proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[RemotingValue], ctx: SerializationContext) =
   ## Writes a BinaryMethodReturn record and its optional call array to the output stream
@@ -294,22 +263,7 @@ proc writeMethodReturn*(outp: OutputStream, ret: BinaryMethodReturn, array: seq[
 
   # Write return array if specified in flags
   if needsCallArray(ret):
-    # Validate that array elements are provided
-    if array.len == 0:
-      raise newException(ValueError, "Call array expected but none provided")
-    
-    # Create and write the array record containing the elements
-    let arrayRecord = RemotingValue(kind: rvArray, arrayVal: ArrayValue(
-      record: ArrayRecord(
-        kind: rtArraySingleObject,
-        arraySingleObject: ArraySingleObject(
-          recordType: rtArraySingleObject,
-          arrayInfo: ArrayInfo(length: array.len.int32)
-        )
-      ),
-      elements: array
-    ))
-    writeRemotingValue(outp, arrayRecord, ctx)
+    writeCallArray(outp, array, ctx)
 
 proc writeRemotingMessage*(outp: OutputStream, msg: RemotingMessage, ctx: SerializationContext) =
   ## Writes a complete remoting message, using the context for ID management.

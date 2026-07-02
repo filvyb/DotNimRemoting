@@ -8,8 +8,6 @@ import ../msnrbf/records/[methodinv, serialization]
 
 type
   RequestHandler* = proc(requestUri: string,
-                        methodName: string,
-                        typeName: string,
                         requestData: seq[byte]): Future[seq[byte]] {.async.}
 
   ServiceHandler* = proc(methodName: string,
@@ -56,7 +54,7 @@ proc registerService*(server: NrtpTcpServer, path: string, service: ServiceHandl
   ## lists the binaryLibrary records class-valued results may reference.
   ## A raised exception travels back as a serialized System.Exception the
   ## client rethrows; raise RemoteException to pick the .NET exception class.
-  proc wrapper(requestUri, methodName, typeName: string,
+  proc wrapper(requestUri: string,
                requestData: seq[byte]): Future[seq[byte]] {.async.} =
     var input = memoryInput(requestData)
     let msg = readRemotingMessage(input)
@@ -137,12 +135,12 @@ proc processClient(server: NrtpTcpServer, client: AsyncSocket) {.async.} =
           # One-way requests get no reply, so swallow handler failures here
           # instead of letting the outer handler send an error frame
           try:
-            discard await handler(requestUri, "", "", requestData)
+            discard await handler(requestUri, requestData)
           except CatchableError as e:
             debugLog "[SERVER] One-way handler failed: ", e.msg
         else:
           debugLog "[SERVER] Processing request and preparing response"
-          let responseData = await handler(requestUri, "", "", requestData)
+          let responseData = await handler(requestUri, requestData)
           debugLog "[SERVER] Handler returned response data, length: ", responseData.len, " bytes"
 
           let responseFrame = createMessageFrame(

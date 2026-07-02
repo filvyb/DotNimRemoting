@@ -7,7 +7,7 @@ import DotNimRemoting/msnrbf/[enums, context, grammar]
 import DotNimRemoting/msnrbf/types as msnrbf_types
 import DotNimRemoting/msnrbf/records/methodinv
 
-proc echoHandler(requestUri, methodName, typeName: string,
+proc echoHandler(requestUri: string,
                  requestData: seq[byte]): Future[seq[byte]] {.async.} =
   return createMethodReturnResponse(stringValue("pong"))
 

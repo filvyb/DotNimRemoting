@@ -147,7 +147,9 @@ suite "RemotingMessage serialization and deserialization":
     # Exactly one copy of the array record in the stream
     check deserialized.referencedRecords.len == 1
     check deserialized.referencedRecords[0].kind == rvArray
-    let resolved = resolveReference(deserialized, deserialized.methodCallArray[0])
+    resolveReferences(deserialized)
+    let resolved = deserialized.methodCallArray[0]
+    check resolved.kind == rvArray
     check resolved.arrayVal.elements.len == 2
     check resolved.arrayVal.elements[0].primitiveVal.int32Val == 1
     check resolved.arrayVal.elements[1].primitiveVal.int32Val == 2
