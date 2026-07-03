@@ -31,7 +31,7 @@ RUN msbuild Client.csproj /p:Configuration=Release
 
 WORKDIR /app
 RUN nimble install --solver:legacy -d -y
-RUN nim c tests/nim/client.nim
-RUN nim c tests/nim/server.nim
+RUN nim c --hints:off -d:nimCallDepthLimit=30000 tests/nim/client.nim
+RUN nim c --hints:off -d:nimCallDepthLimit=30000 tests/nim/server.nim
 
 WORKDIR /app
